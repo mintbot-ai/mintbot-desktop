@@ -5,8 +5,8 @@
     "publisher": "mintbot.ai",
     "name": "mintbot-desktop",
     "version": "0.1.0",
-    "display_name": "Mintbot Desktop",
-    "description": "An opt-in shared browser-interactive desktop for the agent and user.",
+    "display_name": "mintbot Desktop",
+    "description": "A shared desktop for you and your agent, right in your browser.",
     "author": "mintbot.ai",
     "license": "MIT",
     "homepage": "https://github.com/mintbot-ai/mintbot-desktop"
@@ -37,6 +37,20 @@
         ]
       }
     ],
+    "settings_section": {
+      "title": "Agent desktop",
+      "summary": "A shared desktop for you and your agent, right in your browser: you can both run programs, browse the web and change things there.",
+      "icon": "monitor",
+      "views": [
+        "desktop"
+      ],
+      "localized": {
+        "et": {
+          "title": "Agendi töölaud",
+          "summary": "Jagatud töölaud sulle ja sinu agendile otse brauseris: mõlemad saate seal programme käivitada, veebis liikuda ja asju muuta."
+        }
+      }
+    },
     "skills": [
       {
         "name": "mintbot-desktop",

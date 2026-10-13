@@ -1,4 +1,4 @@
-# Mintbot Desktop installed
+# mintbot Desktop installed
 
 Open the extension's **Agent desktop** view in the panel. The host can pin it
 beside chat or show it fullscreen. The agent's installed `mintbot-desktop`

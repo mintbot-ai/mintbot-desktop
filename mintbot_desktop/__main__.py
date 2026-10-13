@@ -63,7 +63,7 @@ async def serve(cfg):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Mintbot Desktop foreground session and shared GUI helper')
+    parser = argparse.ArgumentParser(description='mintbot Desktop foreground session and shared GUI helper')
     parser.add_argument('--state', type=Path, default=Path(os.environ.get('AXP_STATE_DIR', '/var/lib/axp/mintbot.ai/mintbot-desktop')))
     for name in ('display', 'web-port', 'vnc-port', 'cdp-port'):
         parser.add_argument('--'+name, type=int)

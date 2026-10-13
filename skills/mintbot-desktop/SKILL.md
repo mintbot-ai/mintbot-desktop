@@ -1,11 +1,11 @@
 ---
 name: mintbot-desktop
-description: Use when controlling the shared Mintbot Desktop GUI.
+description: Use when controlling the shared mintbot Desktop GUI.
 ---
 
 <!-- Managed by mintbot.ai/mintbot-desktop -->
 
-# Mintbot Desktop
+# mintbot Desktop
 
 The installed launcher is `@LAUNCHER@`; private state is `@STATE@`.
 The panel and the agent share one TigerVNC X session, normally `:13`.

@@ -1,4 +1,4 @@
-# Mintbot Desktop
+# mintbot Desktop
 
 An opt-in shared graphical desktop packaged as the official
 `mintbot.ai/mintbot-desktop` AXP 0.5 extension. It provides a generic panel view

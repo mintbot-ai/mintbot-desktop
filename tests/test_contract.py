@@ -27,8 +27,12 @@ def test_manifest_declares_private_panel_and_shared_session():
     assert m['spec_version'] == '0.5'
     assert m['identity']['publisher'] == 'mintbot.ai'
     assert m['identity']['name'] == 'mintbot-desktop'
-    assert m['identity']['display_name'] == 'Mintbot Desktop'
+    assert m['identity']['display_name'] == 'mintbot Desktop'
     assert m['provides']['panel_views'] == [dict(name='desktop', title='Agent desktop', icon='monitor', service='desktop-web', path='/desktop/', capabilities=['pin', 'fullscreen'])]
+    section = m['provides']['settings_section']
+    assert section['title'] == 'Agent desktop' and section['views'] == ['desktop']
+    assert 'browser' in section['summary'] and 'install' not in section['summary']
+    assert section['localized']['et']['title'] == 'Agendi töölaud'
     service = m['provides']['services'][0]
     assert service['endpoint'] == 'http://127.0.0.1:6081'
     assert service['auth'] == {'scheme': 'bearer', 'token_file': 'state:token'}
