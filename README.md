@@ -30,6 +30,7 @@ uses:
 
 The package refuses the known unrelated display `:12` and ports 5912/6080.
 It also refuses occupied displays/ports and does not kill existing sessions.
+A stale lock left by a crashed X server is not occupancy: Xvnc replaces it.
 CDP has no authentication: a local process with access to this loopback port
 can control the browser. VNC's eight-byte password is generated randomly and
 never delivered to the browser; the gateway completes VncAuth on its behalf.

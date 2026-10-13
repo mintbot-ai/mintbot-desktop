@@ -87,6 +87,30 @@ def gui_environment(cfg):
     return env
 
 
+def display_in_use(display, tmp=Path('/tmp')):
+    """True while another X server owns the display.
+
+    An unclean exit leaves the lock and socket behind, and Xvnc replaces a
+    lock whose PID is gone (rebinding the socket) itself. Only a live or
+    unreadable lock means another session owns the display.
+    """
+    try:
+        pid = int((tmp / f'.X{display}-lock').read_text().strip())
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        return True
+    if pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    return True
+
+
 class Children:
     """Only terminate process groups created by this instance."""
     def __init__(self):

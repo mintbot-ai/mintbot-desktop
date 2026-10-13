@@ -10,7 +10,7 @@ import socket
 import subprocess
 import sys
 
-from .session import Config, Children, browser_command, gui_environment, prepare, vnc_command
+from .session import Config, Children, browser_command, display_in_use, gui_environment, prepare, vnc_command
 
 
 async def serve(cfg):
@@ -21,7 +21,7 @@ async def serve(cfg):
     with (cfg.state / 'session.lock').open('w') as lock:
         os.chmod(cfg.state / 'session.lock', 0o600)
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if Path(f'/tmp/.X11-unix/X{cfg.display}').exists() or Path(f'/tmp/.X{cfg.display}-lock').exists():
+        if display_in_use(cfg.display):
             raise RuntimeError('Display already exists; will not take over another session')
         for port in (cfg.web_port, cfg.vnc_port, cfg.cdp_port):
             with socket.socket() as probe:

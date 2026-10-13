@@ -92,3 +92,19 @@ def test_supervisor_cleans_children_when_start_fails(tmp_path):
             children.processes.append(child)
             raise RuntimeError('later startup failure')
     assert child.poll() is not None
+
+
+def test_dead_x_server_leftovers_do_not_block_a_restart(tmp_path):
+    s = session_module()
+    assert s.display_in_use(13, tmp_path) is False
+    finished = subprocess.Popen(['true'])
+    finished.wait()
+    (tmp_path / '.X11-unix').mkdir()
+    (tmp_path / '.X11-unix' / 'X13').touch()
+    (tmp_path / '.X13-lock').write_text(f'{finished.pid:>10}\n')
+    # Xvnc replaces a dead server's lock and socket itself; refusing them left
+    # the service failing on every restart after a single unclean exit.
+    assert s.display_in_use(13, tmp_path) is False
+    for owner in (f'{os.getpid():>10}\n', 'not-a-pid\n', '0\n'):
+        (tmp_path / '.X13-lock').write_text(owner)
+        assert s.display_in_use(13, tmp_path) is True
