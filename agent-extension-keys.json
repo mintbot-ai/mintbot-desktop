@@ -1,0 +1,12 @@
+{
+  "publisher": "mintbot.ai",
+  "keys": [
+    {
+      "public_key": "ed25519:a4Pd2bbPpUrrDK5oBueJ5lyRwcfmJ4xOMw+2K8xlXQc=",
+      "key_id": "mintbot.ai-mintbot-desktop-2026",
+      "extensions": [
+        "mintbot-desktop"
+      ]
+    }
+  ]
+}

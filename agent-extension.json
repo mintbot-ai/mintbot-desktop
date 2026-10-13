@@ -1,0 +1,141 @@
+{
+  "spec_version": "0.5",
+  "kind": "agent-extension",
+  "identity": {
+    "publisher": "mintbot.ai",
+    "name": "mintbot-desktop",
+    "version": "0.1.0",
+    "display_name": "Mintbot Desktop",
+    "description": "An opt-in shared browser-interactive desktop for the agent and user.",
+    "author": "mintbot.ai",
+    "license": "MIT",
+    "homepage": "https://github.com/mintbot-ai/mintbot-desktop"
+  },
+  "provides": {
+    "services": [
+      {
+        "name": "desktop-web",
+        "kind": "daemon",
+        "summary": "Bearer-authenticated loopback desktop gateway and dedicated GUI session.",
+        "endpoint": "http://127.0.0.1:6081",
+        "auth": {
+          "scheme": "bearer",
+          "token_file": "state:token"
+        }
+      }
+    ],
+    "panel_views": [
+      {
+        "name": "desktop",
+        "title": "Agent desktop",
+        "icon": "monitor",
+        "service": "desktop-web",
+        "path": "/desktop/",
+        "capabilities": [
+          "pin",
+          "fullscreen"
+        ]
+      }
+    ],
+    "skills": [
+      {
+        "name": "mintbot-desktop",
+        "summary": "Control the same graphical session shown in the agent panel.",
+        "path": "skills/mintbot-desktop/"
+      }
+    ]
+  },
+  "requires": {
+    "resources": {
+      "disk_mb": 1600,
+      "ram_mb": 1024
+    }
+  },
+  "permissions": {
+    "root": true,
+    "filesystem": [
+      "state:rw",
+      "cache:rw",
+      "system:rw",
+      "workspace:rw",
+      "hermes:skills:rw"
+    ],
+    "network_ingress": [
+      "127.0.0.1:6081/tcp",
+      "127.0.0.1:5913/tcp",
+      "127.0.0.1:9223/tcp"
+    ],
+    "network_egress": [
+      "127.0.0.1",
+      "deb.debian.org:80",
+      "deb.debian.org:443",
+      "security.debian.org:80",
+      "security.debian.org:443",
+      "mintbot.ai:443",
+      "hermes-agent.nousresearch.com:443",
+      "github.com:443"
+    ],
+    "reason": {
+      "root": "APT installs system GUI dependencies. Root also disables host filesystem/PrivateTmp containment so agent tools and the X session share the same Unix socket. The GUI runs as the agent service user (normally root); it is not a security sandbox.",
+      "filesystem": "State holds mode-0600 credentials, Xauthority and isolated Chromium profile; cache holds runtime files. System package files and the packaged Hermes skill are installed. GUI apps can access agent workspace files and, with root, the full server.",
+      "network_ingress": "Only IPv4 loopback: authenticated HTTP/WebSocket 6081, password-authenticated VNC 5913, Chromium CDP 9223. CDP has no authentication and is for trusted local processes only.",
+      "network_egress": "APT uses the configured host proxy and declared Debian mirrors. Chromium uses the host HTTP proxy for the explicitly listed websites. Loopback is required for health checks and RFB; the host IP filter permits all loopback ports, not just declared ones."
+    }
+  },
+  "release": {
+    "channel": "beta",
+    "artifact": {
+      "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.0/mintbot-desktop-0.1.0.tar.gz",
+      "sha256": "f85f984df3026bdae6d50c12fa9c5c4dea25f4bb141876ac51504c80b2a6893c"
+    },
+    "published_at": "2026-10-13T14:15:37Z",
+    "valid_until": "2027-04-11T14:15:37Z"
+  },
+  "updates": {
+    "source": {
+      "kind": "github",
+      "repo": "mintbot-ai/mintbot-desktop"
+    },
+    "check": "daily",
+    "policy": "notify"
+  },
+  "signing": {
+    "public_key": "ed25519:a4Pd2bbPpUrrDK5oBueJ5lyRwcfmJ4xOMw+2K8xlXQc=",
+    "key_id": "mintbot.ai-mintbot-desktop-2026",
+    "next_key": null
+  },
+  "targets": [
+    {
+      "runtime": "hermes",
+      "runtime_version": ">=0.18.2",
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "enforcement": "advisory",
+      "delivery": {
+        "method": "archive",
+        "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.0/mintbot-desktop-0.1.0.tar.gz",
+        "sha256": "f85f984df3026bdae6d50c12fa9c5c4dea25f4bb141876ac51504c80b2a6893c"
+      },
+      "lifecycle": {
+        "install": "install.sh",
+        "upgrade": "upgrade.sh",
+        "health": "health.sh",
+        "enable": "enable.sh",
+        "disable": "disable.sh",
+        "uninstall": "uninstall.sh"
+      },
+      "component_map": {
+        "services": {
+          "command": [
+            "bin/mintbot-desktop",
+            "serve"
+          ],
+          "restart": "on-failure"
+        }
+      }
+    }
+  ],
+  "signature": "+ibC7/dYD9O96CcFEHjOIf3o2Q299O1a2K+WLmtM7/n9QP+KKcXdnzwC4sLCn/vaAU7KQkumYbYCaj+MwRy4Dg=="
+}
