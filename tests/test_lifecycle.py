@@ -66,8 +66,9 @@ def test_disable_preserves_state_and_failed_stop_prevents_purge(tmp_path):
     hooks.disable()
     assert commands.calls[-1] == ['systemctl', 'stop', hooks.unit]
     assert (tmp_path/'state'/'token').exists()
+    before_enable = list(commands.calls)
     hooks.enable()
-    assert commands.calls[-1] == ['systemctl', 'start', hooks.unit]
+    assert commands.calls == before_enable  # host recreates/starts its unit later
     commands.fail = 'stop'
     hooks.env['AXP_PURGE'] = '1'
     with pytest.raises(subprocess.CalledProcessError):

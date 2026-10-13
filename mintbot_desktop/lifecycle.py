@@ -61,7 +61,9 @@ class Lifecycle:
         # No detached child, standalone systemd unit or global service here.
 
     def enable(self):
-        self.checked(['systemctl', 'start', self.unit])
+        # Activation hooks run before host runtime reconciliation. Disable
+        # removes the managed unit, so only the host can recreate/start it.
+        pass
 
     def disable(self):
         loaded = self.checked(['systemctl', 'show', '--property=LoadState', '--value', self.unit])

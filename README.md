@@ -85,7 +85,9 @@ not vendored or byte-pinned in the source artifact.
 * **install / upgrade:** idempotent APT dependency check/install, package and
   launcher copy, private credentials/state, packaged stock-Hermes skill. It
   does not start a service: host runtime activation follows successful install.
-* **enable:** starts the host-managed unit after the host has created it.
+* **enable:** returns without starting a service. Activation hooks run before
+  host runtime reconciliation; the host recreates and starts its managed unit
+  after this hook succeeds, and reports activation failures.
 * **disable:** stops that unit and all its child GUI processes, retaining state.
   Warn users about unsaved work before disabling.
 * **health:** bearer-authenticated loopback HTTP probe, never via an HTTP proxy.
