@@ -75,11 +75,18 @@ containment fallback to obtain broader network access. `127.0.0.1` egress is
 explicit for the lifecycle health check and RFB, and the host's address-based
 filter consequently permits all loopback ports (not a port-level boundary).
 
-Dependencies come from the user's configured Debian APT repositories, using
-inherited proxy variables. Additional mirrors must be explicitly approved in
-the manifest before installing on such machines. No repository/source list is
-modified. Distro noVNC and Python dependencies receive distro updates; they are
-not vendored or byte-pinned in the source artifact.
+Dependencies come from Debian's own mirrors (`deb.debian.org`, the only ones
+the manifest declares), using inherited proxy variables. The install hook does
+**not** run APT against the machine's configured sources: a provider mirror or
+third-party repository (Hetzner, NodeSource, …) is refused by the host's
+egress proxy and would fail the whole `apt-get update`. Instead it writes a
+private deb822 source list for the running Debian release under
+`AXP_CACHE_DIR/apt/` and points both `apt-get update` and `apt-get install` at
+it, with a private index directory so the host's own index files are never
+pruned. The machine's source lists are not modified; downloads share the
+system archive cache. Non-Debian hosts are refused before APT runs. Distro
+noVNC and Python dependencies receive distro updates; they are not vendored or
+byte-pinned in the source artifact.
 
 ## Lifecycle
 

@@ -14,16 +14,54 @@ PACKAGES = ['tigervnc-standalone-server', 'tigervnc-tools', 'openbox', 'novnc',
             'xauth', 'x11-utils', 'xdotool', 'scrot', 'chromium', 'python3-aiohttp', 'python3-pycryptodome']
 OWNER = '<!-- Managed by mintbot.ai/mintbot-desktop -->'
 
+# The host's egress proxy admits only the mirrors the manifest declares. A
+# machine's own APT sources (provider mirrors, third-party repositories) are
+# refused there and would fail the whole `apt-get update`, so dependencies are
+# fetched through a private source list naming Debian's own mirrors instead.
+# The host's source lists and index cache stay untouched.
+DEBIAN_SOURCES = '''Types: deb
+URIs: http://deb.debian.org/debian/
+Suites: {codename} {codename}-updates
+Components: main
+
+Types: deb
+URIs: http://deb.debian.org/debian-security/
+Suites: {codename}-security
+Components: main
+'''
+
+
+def debian_codename(os_release=Path('/etc/os-release')):
+    """The running Debian release's codename (``trixie``); other distributions are refused."""
+    fields = {}
+    for line in os_release.read_text().splitlines():
+        key, sep, value = line.partition('=')
+        if sep:
+            fields[key.strip()] = value.strip().strip('"')
+    if fields.get('ID') != 'debian' or not fields.get('VERSION_CODENAME'):
+        raise RuntimeError('mintbot Desktop installs its dependencies from Debian mirrors only; this is not a Debian release')
+    return fields['VERSION_CODENAME']
+
+
+def failure_summary(error):
+    """One readable line plus the command's last output lines: the host relays only a short tail."""
+    output = (error.stderr or error.stdout or '').strip()
+    tail = '\n'.join(output.splitlines()[-8:])
+    summary = f'{shlex.join([str(part) for part in error.cmd[:2]])} exited {error.returncode}'
+    return f'{summary}:\n{tail}' if tail else summary
+
 
 class Lifecycle:
     unit = 'mintbot-ext-mintbot.ai-mintbot-desktop-svc-desktop-web.service'
 
-    def __init__(self, *, source, env=None, run=subprocess.run):
+    def __init__(self, *, source, env=None, run=subprocess.run, os_release=Path('/etc/os-release')):
         self.source = Path(source)
         self.env = dict(os.environ if env is None else env)
         self.run = run
+        self.os_release = Path(os_release)
         self.prefix = Path(self.env.get('AXP_PREFIX', '/opt/mintbot-desktop')).resolve()
         self.state = Path(self.env.get('AXP_STATE_DIR', '/var/lib/axp/mintbot.ai/mintbot-desktop')).resolve()
+        self.cache = Path(self.env.get('AXP_CACHE_DIR', '/var/cache/mintbot-desktop')).resolve()
         self.hermes = Path(self.env.get('AXP_HERMES_HOME') or self.env.get('HERMES_HOME') or Path.home() / '.hermes').resolve()
         if len(self.state.parts) < 4 or len(self.prefix.parts) < 3 or self.state == self.prefix:
             raise ValueError('Unsafe install/state paths')
@@ -33,13 +71,30 @@ class Lifecycle:
         result.check_returncode()
         return result
 
+    def apt_options(self):
+        """APT options confining both update and install to the declared Debian mirrors.
+
+        A private index directory keeps `apt-get update` from pruning the
+        host's own index files, which it does for every source it no longer
+        sees. Package downloads still land in the shared archive cache.
+        """
+        apt = self.cache / 'apt'
+        (apt / 'sources.list.d').mkdir(parents=True, exist_ok=True)
+        (apt / 'lists' / 'partial').mkdir(parents=True, exist_ok=True)
+        (apt / 'debian.sources').write_text(DEBIAN_SOURCES.format(codename=debian_codename(self.os_release)))
+        return ['-o', 'DPkg::Lock::Timeout=120',
+                '-o', f'Dir::Etc::SourceList={apt / "debian.sources"}',
+                '-o', f'Dir::Etc::SourceParts={apt / "sources.list.d"}',
+                '-o', f'Dir::State::Lists={apt / "lists"}']
+
     def install(self):
         if os.geteuid() != 0:
             raise PermissionError('System GUI dependencies require root')
         probe = self.run(['dpkg-query', '-W', '-f=${db:Status-Status}\n', *PACKAGES], capture_output=True, text=True)
         if probe.returncode or probe.stdout.splitlines() != ['installed'] * len(PACKAGES):
-            self.checked(['apt-get', 'update', '-o', 'DPkg::Lock::Timeout=120'])
-            self.checked(['apt-get', 'install', '-y', '--no-install-recommends', '-o', 'DPkg::Lock::Timeout=120', *PACKAGES])
+            options = self.apt_options()
+            self.checked(['apt-get', 'update', *options])
+            self.checked(['apt-get', 'install', '-y', '--no-install-recommends', *options, *PACKAGES])
         skill = self.hermes / 'skills' / 'mintbot-desktop' / 'SKILL.md'
         if skill.exists() and OWNER not in skill.read_text():
             raise RuntimeError('Refusing to overwrite an unrelated Hermes skill')
@@ -94,10 +149,19 @@ class Lifecycle:
                 raise RuntimeError('Desktop health failed')
 
 
-def main():
-    hook = sys.argv[1]
-    instance = Lifecycle(source=Path(__file__).resolve().parents[1])
-    getattr(instance, 'install' if hook == 'upgrade' else hook)()
+def main(argv=None):
+    hook = (sys.argv if argv is None else argv)[1]
+    try:
+        instance = Lifecycle(source=Path(__file__).resolve().parents[1])
+        getattr(instance, 'install' if hook == 'upgrade' else hook)()
+    except subprocess.CalledProcessError as error:
+        # A bare traceback hides the failed command's own message; the host
+        # shows the user only the end of this output.
+        print(f'mintbot-desktop: {failure_summary(error)}', file=sys.stderr)
+        sys.exit(1)
+    except (OSError, ValueError, RuntimeError) as error:
+        print(f'mintbot-desktop: {error}', file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == '__main__':
