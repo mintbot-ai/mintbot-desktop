@@ -121,11 +121,17 @@ session. The existing Hermes browser tool does not magically attach to it.
 
 `mintbot-desktop browse ACTION` drives the session's Chromium through its
 DevTools endpoint with Playwright: `pages`, `open`, `snapshot` (accessibility
-tree), `text`, `click`, `fill`, `type`, `press`, `eval`, `wait`, `screenshot`,
-and `status`. It attaches per command and detaches afterwards; the browser the
-user watches stays the same one. The install hook creates `PREFIX/venv` with
-the Playwright package (no browser download; `MINTBOT_DESKTOP_VENV` overrides
-the location) and the launcher re-executes `browse` under it. APT also
+tree, optionally filtered by `--roles`), `text`, `click`, `fill`, `type`,
+`press`, `eval`, `wait`, `screenshot` (whole tab or one `--selector`), `run`
+(a JSON list of steps over one connection) and `status`. It attaches per
+command and detaches afterwards; the browser the user watches stays the same
+one. Because each attachment lists the tabs in an arbitrary order, the tab the
+last `open` navigated is recorded by its CDP target id in `state:browse-tab`
+and stays the default for the commands that follow; `--page` overrides it for
+one command, and errors are prefixed with the tab's title and URL. The
+install hook creates `PREFIX/venv` with the Playwright package (no browser
+download; `MINTBOT_DESKTOP_VENV` overrides the location) and the launcher
+re-executes `browse` under it. APT also
 installs `wmctrl`, `xclip`, `maim` and `at-spi2-core` for windows, clipboard,
 screenshots and Hermes's optional `computer_use` toolset; the skill explains
 when to use which.

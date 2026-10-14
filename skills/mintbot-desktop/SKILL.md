@@ -30,10 +30,11 @@ every command; it never starts or closes the browser.
 
 ```sh
 @LAUNCHER@ browse status                        # CDP reachable? driver installed?
-@LAUNCHER@ browse pages                         # open tabs: index, title, url
-@LAUNCHER@ browse open https://example.com      # navigate the newest tab
+@LAUNCHER@ browse pages                         # open tabs: targetId, title, url, current
+@LAUNCHER@ browse open https://example.com      # navigate your tab; prints its targetId
 @LAUNCHER@ browse open --new https://example.com
 @LAUNCHER@ browse snapshot                      # accessibility tree: roles, names, text
+@LAUNCHER@ browse snapshot main --roles button,link,textbox   # only what you can act on
 @LAUNCHER@ browse text main                     # inner text of a selector (default: body)
 @LAUNCHER@ browse click 'text=Log in'           # first match of a Playwright selector
 @LAUNCHER@ browse fill 'input[name=q]' 'query'
@@ -41,12 +42,37 @@ every command; it never starts or closes the browser.
 @LAUNCHER@ browse wait 'text=Results'
 @LAUNCHER@ browse eval 'document.title'
 @LAUNCHER@ browse screenshot /path/to/private/shot.png
+@LAUNCHER@ browse screenshot /path/to/private/form.png --selector main   # one element, small
 ```
 
-`--page SUBSTRING` before the action picks the tab whose URL or title contains
-it; the default is the newest tab. Prefer `open --new` over a tab the user is
-working in. Selectors are Playwright's: CSS, `text=`, `role=button[name="Save"]`,
-`xpath=`. Read `snapshot` first, then act on what it names.
+**Your tab.** The tab the last `open` navigated stays the target of every
+following command until you `open` again, even when the user switches tabs
+meanwhile. Start a task with `open --new` rather than taking over a tab the
+user is working in. `--page TAB` before the action picks another tab for that
+one command: a target id from `pages`, or a substring of the URL or title.
+If your tab was closed, commands fall back to the tab the user is looking at.
+Every error starts with `page: <title> <url>`, so a timeout tells you which
+tab it was waiting in.
+
+**Several steps in one go.** Each command attaches to the browser anew (about
+a second); `run` performs a whole list of steps over one connection and
+prints their results as a JSON array:
+
+```sh
+printf '%s' '[{"fill": ["input[name=q]", "query"]}, {"press": "Enter"},
+  {"wait": "text=Results"}, {"text": "main"}]' | @LAUNCHER@ browse run
+@LAUNCHER@ browse run /path/to/steps.json
+```
+
+A step is `{"action": arguments}` with the same arguments as the command line
+(a list, one string, or null for none; options like `--timeout` go in the
+list); `"page"` next to the action picks a tab for that step. The first failing
+step stops the run and its error names the step index; the results of the
+completed steps are still printed.
+
+Selectors are Playwright's: CSS, `text=`, `role=button[name="Save"]`,
+`xpath=`. Read `snapshot` first (with `--roles` on a large page: the full
+tree can be far longer than your terminal shows), then act on what it names.
 
 If `status` says the driver is missing, upgrade or reinstall the extension;
 its install hook creates the virtualenv under the install prefix.

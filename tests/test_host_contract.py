@@ -11,7 +11,7 @@ import pytest
 
 
 def test_manifest_through_actual_host_runtime_apply(tmp_path, monkeypatch):
-    host = Path(os.environ.get('MINTBOT_HOST_REPO', '/root/projects/mintbot-axp-desktop'))
+    host = Path(os.environ.get('MINTBOT_HOST_REPO', '/root/projects/mintbot'))
     plugins = host/'agent_templates'/'_shared'/'plugins'/'mintbot'
     if not plugins.is_dir():
         pytest.skip('Set MINTBOT_HOST_REPO to test against the AXP host checkout')
