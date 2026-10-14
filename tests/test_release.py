@@ -1,7 +1,9 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +25,26 @@ def test_artifact_is_deterministic_and_contains_only_runtime(tmp_path):
         for member in tar.getmembers():
             assert member.uid == member.gid == member.mtime == 0
         assert not any('.git' in n or '__pycache__' in n or n.endswith('.key') or n.startswith('tests/') or n == 'agent-extension.json' for n in names)
+
+
+def test_artifact_ships_the_whole_package_and_its_entry_points_import(tmp_path):
+    """Every module of the package travels in the artifact, and the two
+    entry points the host runs (the lifecycle hooks, the launcher) import
+    from the unpacked copy alone. A module added to the package but not to
+    the builder's file list once broke every install with a bare
+    ModuleNotFoundError; the sources are not on the path during install."""
+    result = subprocess.run(['bash', str(ROOT/'scripts/build-artifact.sh'), '0.1.0', str(tmp_path)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    unpacked = tmp_path/'unpacked'
+    with tarfile.open(tmp_path/'mintbot-desktop-0.1.0.tar.gz') as tar:
+        names = set(tar.getnames())
+        tar.extractall(unpacked, filter='data')
+    expected = {f'mintbot_desktop/{path.name}' for path in (ROOT/'mintbot_desktop').glob('*.py')}
+    assert expected <= names, f'package modules missing from the artifact: {sorted(expected - names)}'
+    probe = subprocess.run([sys.executable, '-c', 'import mintbot_desktop.lifecycle, mintbot_desktop.__main__'],
+                           cwd=tmp_path, env={'PATH': os.environ.get('PATH', ''), 'PYTHONPATH': str(unpacked)},
+                           capture_output=True, text=True)
+    assert probe.returncode == 0, probe.stderr
 
 
 def test_release_fails_closed_without_private_key(tmp_path):
