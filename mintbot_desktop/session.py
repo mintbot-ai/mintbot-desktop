@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import secrets
 import signal
+import socket
 import subprocess
 
 
@@ -41,6 +42,29 @@ def browser_command(cfg, env):
     return args + ['about:blank']
 
 
+VNC_SECRET_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+
+def vnc_secret():
+    """VNC passwords are capped at 8 characters, so spend them on a wide alphabet (~47 bits), not hex (32)."""
+    return ''.join(secrets.choice(VNC_SECRET_ALPHABET) for _ in range(8))
+
+
+def port_available(port, host='127.0.0.1'):
+    """True when nothing listens on the port.
+
+    SO_REUSEADDR makes the probe ignore the TIME_WAIT connections a previous
+    session left behind, which would otherwise block a restart for a minute.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
 def private_write(path, data):
     """Create once without following symlinks; never overwrite credentials."""
     try:
@@ -58,7 +82,7 @@ def prepare(cfg):
     cfg.state.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(cfg.state, 0o700)
     private_write(cfg.state / 'token', secrets.token_urlsafe(48).encode())
-    private_write(cfg.state / 'vnc-secret', secrets.token_hex(4).encode())
+    private_write(cfg.state / 'vnc-secret', vnc_secret().encode())
     for name in ('vnc-password', 'Xauthority'):
         path = cfg.state / name
         if path.is_symlink() or (path.exists() and not path.is_file()):
@@ -120,19 +144,38 @@ class Children:
         return self
 
     def start(self, argv, **kwargs):
+        self._prune_finished()
         process = subprocess.Popen(argv, start_new_session=True, **kwargs)
         self.processes.append(process)
         return process
 
+    def _prune_finished(self):
+        """Drop exited children so repeated restarts do not grow the list without bound."""
+        self.processes = [p for p in self.processes if p.poll() is None]
+
     def __exit__(self, *exc):
-        for process in reversed(self.processes):
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+        self._signal_all(signal.SIGTERM)
         for process in reversed(self.processes):
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait(timeout=5)
+                self._signal(process, signal.SIGKILL)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+        self.processes.clear()
+
+    def _signal_all(self, signum):
+        for process in reversed(self.processes):
+            self._signal(process, signum)
+
+    @staticmethod
+    def _signal(process, signum):
+        """Signal the child's process group; a group that already vanished is not an error."""
+        if process.poll() is not None:
+            return
+        try:
+            os.killpg(process.pid, signum)
+        except ProcessLookupError:
+            pass

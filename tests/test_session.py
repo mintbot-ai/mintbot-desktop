@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import socket
 import stat
 import subprocess
 
@@ -92,6 +93,61 @@ def test_supervisor_cleans_children_when_start_fails(tmp_path):
             children.processes.append(child)
             raise RuntimeError('later startup failure')
     assert child.poll() is not None
+
+
+def test_vnc_secret_fits_the_eight_character_cap_with_a_wide_alphabet():
+    s = session_module()
+    secret = s.vnc_secret()
+    assert len(secret) == 8
+    assert set(secret) <= set(s.VNC_SECRET_ALPHABET)
+    # Lookalike characters stay out so a user can type the secret from a screen.
+    assert not set('0O1lI') & set(s.VNC_SECRET_ALPHABET)
+    assert s.vnc_secret() != secret
+
+
+def test_port_available_reports_listeners_but_not_time_wait_leftovers():
+    s = session_module()
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        assert s.port_available(port) is False
+    assert s.port_available(port) is True
+    # A finished connection leaves the server side in TIME_WAIT; that must not block a restart.
+    with socket.socket() as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(('127.0.0.1', 0))
+        server.listen()
+        port = server.getsockname()[1]
+        with socket.create_connection(('127.0.0.1', port)) as client:
+            accepted, _ = server.accept()
+            accepted.close()
+    assert s.port_available(port) is True
+
+
+def test_children_forget_exited_processes_on_restart():
+    s = session_module()
+    with s.Children() as children:
+        for _ in range(5):
+            children.start(['true']).wait()
+        survivor = children.start(['sleep', '60'])
+        assert children.processes == [survivor]
+    assert survivor.poll() is not None
+
+
+def test_supervised_restarts_a_dying_child_then_gives_up():
+    from mintbot_desktop import __main__ as main
+    with session_module().Children() as children:
+        child = main.Supervised(children, 'probe', ['true'], os.environ.copy())
+        seen = {child.process.pid}
+        for _ in range(main.RESTART_LIMIT):
+            child.process.wait()
+            child.check()
+            assert child.process.pid not in seen
+            seen.add(child.process.pid)
+        child.process.wait()
+        with pytest.raises(RuntimeError, match='keeps exiting'):
+            child.check()
 
 
 def test_dead_x_server_leftovers_do_not_block_a_restart(tmp_path):

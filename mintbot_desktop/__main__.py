@@ -6,11 +6,52 @@ import json
 import os
 from pathlib import Path
 import signal
-import socket
 import subprocess
 import sys
+import time
 
-from .session import Config, Children, browser_command, display_in_use, gui_environment, prepare, vnc_command
+from .session import (Config, Children, browser_command, display_in_use, gui_environment, port_available,
+                      prepare, vnc_command)
+
+
+# A window manager or browser that dies this often is broken, not unlucky.
+RESTART_LIMIT = 3
+RESTART_WINDOW = 60.0
+
+
+def log(message):
+    print(f'mintbot-desktop: {message}', file=sys.stderr, flush=True)
+
+
+async def wait_for_display(x, env, stop):
+    """Block until the X server answers, exits, or the session is asked to stop."""
+    for _ in range(100):
+        if x.poll() is not None:
+            raise RuntimeError(f'X server exited with status {x.returncode} before readiness')
+        check = await asyncio.create_subprocess_exec('xdpyinfo', env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if await check.wait() == 0 or stop.is_set():
+            return
+        await asyncio.sleep(.1)
+    raise RuntimeError('X server readiness timed out')
+
+
+class Supervised:
+    """A child that is restarted when it dies, up to RESTART_LIMIT times per RESTART_WINDOW."""
+    def __init__(self, children, name, argv, env):
+        self.children, self.name, self.argv, self.env = children, name, argv, env
+        self.process = children.start(argv, env=env)
+        self.restarts = []
+
+    def check(self):
+        if self.process.poll() is None:
+            return
+        now = time.monotonic()
+        self.restarts = [moment for moment in self.restarts if now - moment < RESTART_WINDOW]
+        if len(self.restarts) >= RESTART_LIMIT:
+            raise RuntimeError(f'{self.name} keeps exiting (last status {self.process.returncode}); giving up')
+        self.restarts.append(now)
+        log(f'{self.name} exited with status {self.process.returncode}; restarting')
+        self.process = self.children.start(self.argv, env=self.env)
 
 
 async def serve(cfg):
@@ -20,12 +61,15 @@ async def serve(cfg):
     prepare(cfg)
     with (cfg.state / 'session.lock').open('w') as lock:
         os.chmod(cfg.state / 'session.lock', 0o600)
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError('Another desktop session already uses this state directory') from None
         if display_in_use(cfg.display):
-            raise RuntimeError('Display already exists; will not take over another session')
-        for port in (cfg.web_port, cfg.vnc_port, cfg.cdp_port):
-            with socket.socket() as probe:
-                probe.bind(('127.0.0.1', port))
+            raise RuntimeError(f'Display :{cfg.display} already exists; will not take over another session')
+        for name, port in (('web', cfg.web_port), ('VNC', cfg.vnc_port), ('CDP', cfg.cdp_port)):
+            if not port_available(port):
+                raise RuntimeError(f'{name} port {port} is already in use')
         env = gui_environment(cfg)
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -33,27 +77,21 @@ async def serve(cfg):
             loop.add_signal_handler(sig, stop.set)
         with Children() as children:
             x = children.start(vnc_command(cfg), env=env)
-            for _ in range(100):
-                if x.poll() is not None:
-                    raise RuntimeError('X server exited before readiness')
-                check = await asyncio.create_subprocess_exec('xdpyinfo', env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if await check.wait() == 0:
-                    break
-                if stop.is_set():
-                    return
-                await asyncio.sleep(.1)
-            else:
-                raise RuntimeError('X server readiness timed out')
-            children.start(['openbox'], env=env)
-            children.start(browser_command(cfg, env), env=env)
+            await wait_for_display(x, env, stop)
+            if stop.is_set():
+                return
+            supervised = [Supervised(children, 'window manager', ['openbox'], env),
+                          Supervised(children, 'browser', browser_command(cfg, env), env)]
             app = create_app(token=(cfg.state / 'token').read_text(), password=(cfg.state / 'vnc-secret').read_text(), rfb_port=cfg.vnc_port)
             runner = web.AppRunner(app, access_log=None)
             try:
                 await runner.setup()
                 await web.TCPSite(runner, '127.0.0.1', cfg.web_port).start()
                 while not stop.is_set():
-                    if any(child.poll() is not None for child in children.processes):
-                        raise RuntimeError('Desktop child exited unexpectedly')
+                    if x.poll() is not None:
+                        raise RuntimeError(f'X server exited with status {x.returncode}')
+                    for child in supervised:
+                        child.check()
                     try:
                         await asyncio.wait_for(stop.wait(), timeout=.25)
                     except asyncio.TimeoutError:
