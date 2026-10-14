@@ -4,7 +4,7 @@
   "identity": {
     "publisher": "mintbot.ai",
     "name": "mintbot-desktop",
-    "version": "0.1.5",
+    "version": "0.1.6",
     "display_name": "mintbot Desktop",
     "description": "A shared desktop for you and your agent, right in your browser.",
     "author": "mintbot.ai",
@@ -92,11 +92,11 @@
   "release": {
     "channel": "beta",
     "artifact": {
-      "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.5/mintbot-desktop-0.1.5.tar.gz",
-      "sha256": "29ece605cdaab79991761ac20a28613ed583b58a42a5048ecc53757e42da77fa"
+      "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.6/mintbot-desktop-0.1.6.tar.gz",
+      "sha256": "e585655136f0635446e099614d3b836a6219322465c4c706f51b7592a3c143c7"
     },
-    "published_at": "2026-10-14T20:42:18Z",
-    "valid_until": "2027-04-12T20:42:18Z"
+    "published_at": "2026-10-14T21:19:47Z",
+    "valid_until": "2027-04-12T21:19:47Z"
   },
   "updates": {
     "source": {
@@ -104,7 +104,7 @@
       "repo": "mintbot-ai/mintbot-desktop"
     },
     "check": "daily",
-    "policy": "notify"
+    "policy": "auto"
   },
   "signing": {
     "public_key": "ed25519:a4Pd2bbPpUrrDK5oBueJ5lyRwcfmJ4xOMw+2K8xlXQc=",
@@ -122,8 +122,8 @@
       "enforcement": "advisory",
       "delivery": {
         "method": "archive",
-        "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.5/mintbot-desktop-0.1.5.tar.gz",
-        "sha256": "29ece605cdaab79991761ac20a28613ed583b58a42a5048ecc53757e42da77fa"
+        "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.6/mintbot-desktop-0.1.6.tar.gz",
+        "sha256": "e585655136f0635446e099614d3b836a6219322465c4c706f51b7592a3c143c7"
       },
       "lifecycle": {
         "install": "install.sh",
@@ -144,5 +144,5 @@
       }
     }
   ],
-  "signature": "O6kp2Fpyb8+MGGEFK4yNVDH+OqgFsxyomWn26gelqchBiNbSao3G+7gEr3Dv1O3QMCPxy6lXhAHxZ0fYJJzKBQ=="
+  "signature": "CbIbQrLblVt/JetuOmq2wQqitS3a/6Z1l52urkusIuV2xWafP2S/5ddQFmAHJsSejMpQ2mf2z9WDf/4PkCwWAw=="
 }
