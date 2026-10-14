@@ -64,22 +64,22 @@ agent GUI commands can access the same X socket and Xauthority. This gives
 full filesystem authority, including agent workspaces and secrets; logical
 filesystem scopes are disclosure, **not isolation**, for this root package.
 
-`root:true` does **not** disable runtime networking. The existing host AXP
-runtime applies `IPAddressDeny=any` with named egress routed through its proxy.
-The package inherits those settings and passes the proxy to Chromium; QUIC is
-disabled. Only the signed manifest's explicit mirrors and websites are allowed.
-General web browsing is **not** promised. Adding a website requires a reviewed
-manifest permission change/update and consent under host policy. The package
-does not use a separate unmanaged unit, wildcard listener, startup failure, or
-containment fallback to obtain broader network access. `127.0.0.1` egress is
-explicit for the lifecycle health check and RFB, and the host's address-based
-filter consequently permits all loopback ports (not a port-level boundary).
+The manifest declares `network_egress: ["*"]` — egress to any host. This is
+a desktop with a web browser: the user and the agent browse any website from
+it, which a list of named hosts could never say. The AXP host cannot filter
+that by name, so it runs no egress proxy for this extension, applies no
+address filter to its unit, and records the network half as *not enforced*;
+the consent card says the same in plain words. Chromium goes direct (QUIC is
+still disabled; a host that does set a proxy is honoured). The package does
+not use a separate unmanaged unit, wildcard listener, startup failure, or
+containment fallback: the open network is what the signed manifest declares
+and what the user consents to. Loopback carries the lifecycle health check
+and RFB.
 
-Dependencies come from Debian's own mirrors (`deb.debian.org`, the only ones
-the manifest declares), using inherited proxy variables. The install hook does
-**not** run APT against the machine's configured sources: a provider mirror or
-third-party repository (Hetzner, NodeSource, …) is refused by the host's
-egress proxy and would fail the whole `apt-get update`. Instead it writes a
+Dependencies come from Debian's own mirrors (`deb.debian.org`). The install
+hook does **not** run APT against the machine's configured sources: one
+unreachable provider mirror or third-party repository (Hetzner, NodeSource, …)
+would fail the whole `apt-get update`. Instead it writes a
 private deb822 source list for the running Debian release under
 `AXP_CACHE_DIR/apt/` and points both `apt-get update` and `apt-get install` at
 it, with a private index directory so the host's own index files are never
@@ -131,8 +131,9 @@ lifecycle failure semantics, and a temporary real GUI stack when distro
 binaries are present. The host-contract test also runs this manifest through
 the neighboring host checkout's real `axp_runtime.apply` path with systemctl
 replaced by a recorder and every writable path redirected to scratch. It
-verifies the managed unit name, proxy environment, retained IP deny rules and
-absence of a containment downgrade; this is not a live systemd activation.
+It verifies the managed unit name, that no proxy or address filter is applied
+and that the open network is recorded as such; this is not a live systemd
+activation.
 Set `MINTBOT_HOST_REPO` to select another host checkout.
 
 The GUI test uses scratch state, an unused display in

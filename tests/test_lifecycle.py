@@ -63,8 +63,9 @@ def test_apt_failure_does_not_report_success_or_start_services(tmp_path):
 
 
 def test_apt_uses_only_declared_debian_mirrors(tmp_path):
-    """The host egress proxy refuses a machine's own mirrors (Hetzner, NodeSource);
-    both apt-get calls must read a private source list and a private index dir."""
+    """A machine's own APT sources (provider mirrors, third-party repositories)
+    are not this package's to depend on; both apt-get calls must read a private
+    source list naming Debian's own mirrors and a private index dir."""
     commands = FakeCommands()
     hooks = lifecycle(tmp_path, commands, os_release='PRETTY_NAME="Debian GNU/Linux 13 (trixie)"\nID=debian\nVERSION_CODENAME=trixie\n')
     hooks.install()

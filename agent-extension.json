@@ -4,7 +4,7 @@
   "identity": {
     "publisher": "mintbot.ai",
     "name": "mintbot-desktop",
-    "version": "0.1.3",
+    "version": "0.1.4",
     "display_name": "mintbot Desktop",
     "description": "A shared desktop for you and your agent, right in your browser.",
     "author": "mintbot.ai",
@@ -80,30 +80,23 @@
       "127.0.0.1:9223/tcp"
     ],
     "network_egress": [
-      "127.0.0.1",
-      "deb.debian.org:80",
-      "deb.debian.org:443",
-      "security.debian.org:80",
-      "security.debian.org:443",
-      "mintbot.ai:443",
-      "hermes-agent.nousresearch.com:443",
-      "github.com:443"
+      "*"
     ],
     "reason": {
       "root": "APT installs system GUI dependencies. Root also disables host filesystem/PrivateTmp containment so agent tools and the X session share the same Unix socket. The GUI runs as the agent service user (normally root); it is not a security sandbox.",
       "filesystem": "State holds mode-0600 credentials, Xauthority and isolated Chromium profile; cache holds runtime files. System package files and the packaged Hermes skill are installed. GUI apps can access agent workspace files and, with root, the full server.",
       "network_ingress": "Only IPv4 loopback: authenticated HTTP/WebSocket 6081, password-authenticated VNC 5913, Chromium CDP 9223. CDP has no authentication and is for trusted local processes only.",
-      "network_egress": "APT fetches dependencies from the declared Debian mirrors only (a private source list, never the machine's own mirrors) through the host proxy. Chromium uses the host HTTP proxy for the explicitly listed websites. Loopback is required for health checks and RFB; the host IP filter permits all loopback ports, not just declared ones."
+      "network_egress": "This is a desktop with a web browser: you and your agent browse any website from it, so it declares egress to any host. The host cannot filter that by name and leaves this extension's network unfiltered (it says so on the consent card). APT still fetches dependencies from Debian's own mirrors through a private source list, never the machine's own sources. Loopback is used for health checks and RFB."
     }
   },
   "release": {
     "channel": "beta",
     "artifact": {
-      "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.3/mintbot-desktop-0.1.3.tar.gz",
-      "sha256": "799d4665d539dbd659415d3eac6cbb972d33d314114c9c5ed2e969406e573626"
+      "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.4/mintbot-desktop-0.1.4.tar.gz",
+      "sha256": "25795b9b0e10f991986faa4f826e9614f33778f30585c0765bfc050b80c0499a"
     },
-    "published_at": "2026-10-14T17:02:26Z",
-    "valid_until": "2027-04-12T17:02:26Z"
+    "published_at": "2026-10-14T20:01:47Z",
+    "valid_until": "2027-04-12T20:01:47Z"
   },
   "updates": {
     "source": {
@@ -129,8 +122,8 @@
       "enforcement": "advisory",
       "delivery": {
         "method": "archive",
-        "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.3/mintbot-desktop-0.1.3.tar.gz",
-        "sha256": "799d4665d539dbd659415d3eac6cbb972d33d314114c9c5ed2e969406e573626"
+        "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.4/mintbot-desktop-0.1.4.tar.gz",
+        "sha256": "25795b9b0e10f991986faa4f826e9614f33778f30585c0765bfc050b80c0499a"
       },
       "lifecycle": {
         "install": "install.sh",
@@ -151,5 +144,5 @@
       }
     }
   ],
-  "signature": "if2e57CTWWLddptJ9bIuR10Tv0jzUZTplZBI6DSGL+QY+hIFIfxvE512g0zy2f+5kndT6VZhQ7lccb/4r3yvAQ=="
+  "signature": "3XKZcx7FiEgLEaTgDlKjo2g/BK86fLrMf4GytQkH6N+4ZXu9+aL/Revp+aF4MrUpqpEHcBJt0o6N2xWDucGzCA=="
 }

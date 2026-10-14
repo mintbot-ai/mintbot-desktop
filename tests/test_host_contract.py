@@ -39,17 +39,20 @@ def test_manifest_through_actual_host_runtime_apply(tmp_path, monkeypatch):
               'provides':m['provides'], 'permissions':m['permissions'],
               'component_map':m['targets'][0]['component_map']}
     result = rt.apply(record, systemd=rt.Systemd(run=run))
-    assert result['proxy'], result
+    # Egress to any host (`*`): the host runs no proxy for this extension and
+    # records the network half as not enforced, rather than a proxy that
+    # admits everything. Root already switched the filesystem half off.
+    assert result['proxy'] is None, result
     service = result['services'][0]
     assert service['mode'] == 'managed'
-    assert service['enforcement'] == 'advisory'
+    assert service['enforcement'] == 'declared'
+    assert any('any host' in note for note in service['notes'])
     assert not any('released' in note for note in service['notes'])
     from mintbot_desktop.lifecycle import Lifecycle
     assert service['unit'] == Lifecycle.unit
     unit = (tmp_path/'units'/service['unit']).read_text()
-    assert 'IPAddressDeny=any' in unit
-    assert 'IPAddressAllow=127.0.0.1' in unit
-    assert 'HTTPS_PROXY=http://' in unit
+    assert 'IPAddressDeny=' not in unit and 'IPAddressAllow=' not in unit
+    assert '_PROXY=' not in unit
     assert 'PrivateTmp=' not in unit and 'ProtectSystem=' not in unit
     assert f'ExecStart={tmp_path}/prefix/bin/mintbot-desktop serve' in unit
     assert any('enable' in call and service['unit'] in call for call in calls)

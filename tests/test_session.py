@@ -28,6 +28,8 @@ def test_safe_config_and_browser_commands(tmp_path):
     assert f'--user-data-dir={tmp_path}/chromium' in browser
     assert '--proxy-server=http://127.42.1.2:3128' in browser
     assert '--disable-quic' in browser
+    # The manifest declares egress to any host, so the host sets no proxy: Chromium goes direct.
+    assert not any(a.startswith('--proxy-server=') for a in s.browser_command(cfg, {}))
     with pytest.raises(ValueError):
         s.Config(state=tmp_path, display=12)
     with pytest.raises(ValueError):

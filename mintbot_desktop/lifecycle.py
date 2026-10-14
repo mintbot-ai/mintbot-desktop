@@ -14,11 +14,11 @@ PACKAGES = ['tigervnc-standalone-server', 'tigervnc-tools', 'openbox', 'novnc',
             'xauth', 'x11-utils', 'xdotool', 'scrot', 'chromium', 'python3-aiohttp', 'python3-pycryptodome']
 OWNER = '<!-- Managed by mintbot.ai/mintbot-desktop -->'
 
-# The host's egress proxy admits only the mirrors the manifest declares. A
-# machine's own APT sources (provider mirrors, third-party repositories) are
-# refused there and would fail the whole `apt-get update`, so dependencies are
-# fetched through a private source list naming Debian's own mirrors instead.
-# The host's source lists and index cache stay untouched.
+# A machine's own APT sources (provider mirrors, third-party repositories) are
+# not this package's to depend on: one unreachable or broken source fails the
+# whole `apt-get update`, so dependencies are fetched through a private source
+# list naming Debian's own mirrors instead. The host's source lists and index
+# cache stay untouched.
 DEBIAN_SOURCES = '''Types: deb
 URIs: http://deb.debian.org/debian/
 Suites: {codename} {codename}-updates
