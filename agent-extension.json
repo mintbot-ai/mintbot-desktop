@@ -4,7 +4,7 @@
   "identity": {
     "publisher": "mintbot.ai",
     "name": "mintbot-desktop",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "display_name": "mintbot Desktop",
     "description": "A shared desktop for you and your agent, right in your browser.",
     "author": "mintbot.ai",
@@ -93,17 +93,17 @@
       "root": "APT installs system GUI dependencies. Root also disables host filesystem/PrivateTmp containment so agent tools and the X session share the same Unix socket. The GUI runs as the agent service user (normally root); it is not a security sandbox.",
       "filesystem": "State holds mode-0600 credentials, Xauthority and isolated Chromium profile; cache holds runtime files. System package files and the packaged Hermes skill are installed. GUI apps can access agent workspace files and, with root, the full server.",
       "network_ingress": "Only IPv4 loopback: authenticated HTTP/WebSocket 6081, password-authenticated VNC 5913, Chromium CDP 9223. CDP has no authentication and is for trusted local processes only.",
-      "network_egress": "APT uses the configured host proxy and declared Debian mirrors. Chromium uses the host HTTP proxy for the explicitly listed websites. Loopback is required for health checks and RFB; the host IP filter permits all loopback ports, not just declared ones."
+      "network_egress": "APT fetches dependencies from the declared Debian mirrors only (a private source list, never the machine's own mirrors) through the host proxy. Chromium uses the host HTTP proxy for the explicitly listed websites. Loopback is required for health checks and RFB; the host IP filter permits all loopback ports, not just declared ones."
     }
   },
   "release": {
     "channel": "beta",
     "artifact": {
-      "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.1/mintbot-desktop-0.1.1.tar.gz",
-      "sha256": "6d14a5f261a5e7238fb7f3116b5ed2fcc43f1eeb23264609fedc653836899019"
+      "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.2/mintbot-desktop-0.1.2.tar.gz",
+      "sha256": "5185048d66475023a613171eefd8f6e3314dbaf4fb123cc089843bfc989c268d"
     },
-    "published_at": "2026-10-13T17:17:20Z",
-    "valid_until": "2027-04-11T17:17:20Z"
+    "published_at": "2026-10-14T15:36:23Z",
+    "valid_until": "2027-04-12T15:36:23Z"
   },
   "updates": {
     "source": {
@@ -129,8 +129,8 @@
       "enforcement": "advisory",
       "delivery": {
         "method": "archive",
-        "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.1/mintbot-desktop-0.1.1.tar.gz",
-        "sha256": "6d14a5f261a5e7238fb7f3116b5ed2fcc43f1eeb23264609fedc653836899019"
+        "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.2/mintbot-desktop-0.1.2.tar.gz",
+        "sha256": "5185048d66475023a613171eefd8f6e3314dbaf4fb123cc089843bfc989c268d"
       },
       "lifecycle": {
         "install": "install.sh",
@@ -151,5 +151,5 @@
       }
     }
   ],
-  "signature": "63SPQgWLyu+a1OiEOv1K4a7KpaA6bt57zA/WKX4Qk67NuzOo3hQ8ocqun3z02hvczoDceZqZce3dJ5T5NThvAw=="
+  "signature": "omai8szXV4d4xrZidAWlrxTuTgUEDQ+kzLFDsfV1WUzcjd+jh7yunEEGhlxDgKTfVDXfkgL8iPxEE9EfMn5TAg=="
 }
