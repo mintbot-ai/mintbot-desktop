@@ -12,6 +12,7 @@ class FakeCommands:
     def __init__(self):
         self.calls = []
         self.installed = False
+        self.playwright = False
         self.fail = None
 
     def __call__(self, args, **kwargs):
@@ -22,6 +23,14 @@ class FakeCommands:
             return subprocess.CompletedProcess(args, 0 if self.installed else 1, 'installed\n' * (len(args)-3) if self.installed else '', '')
         if args[:2] == ['apt-get', 'install']:
             self.installed = True
+        if args[1:3] == ['-m', 'venv']:
+            python = Path(args[3]) / 'bin' / 'python'
+            python.parent.mkdir(parents=True)
+            python.touch()
+        if args[1:4] == ['-m', 'pip', 'install']:
+            self.playwright = True
+        if args[1:] == ['-c', 'import playwright']:
+            return subprocess.CompletedProcess(args, 0 if self.playwright else 1, '', '')
         return subprocess.CompletedProcess(args, 0, '', '')
 
 
@@ -43,6 +52,11 @@ def test_install_idempotently_converges_without_starting_host_service(tmp_path):
     assert (tmp_path/'state'/'token').read_bytes() == first
     assert sum(c[:2] == ['apt-get','install'] for c in commands.calls) == 1
     assert not any(c[0] == 'systemctl' for c in commands.calls)
+    # The browser driver venv converges the same way: built once, then probed.
+    pip_installs = [c for c in commands.calls if c[1:4] == ['-m', 'pip', 'install']]
+    assert len(pip_installs) == 1 and pip_installs[0][0] == str(tmp_path/'prefix'/'venv'/'bin'/'python')
+    assert any('playwright' in part for part in pip_installs[0])
+    assert sum(c[1:3] == ['-m', 'venv'] for c in commands.calls) == 1
     launcher = tmp_path/'prefix'/'bin'/'mintbot-desktop'
     assert launcher.is_file()
     assert (tmp_path/'hermes'/'skills'/'mintbot-desktop'/'SKILL.md').is_file()
@@ -60,6 +74,16 @@ def test_apt_failure_does_not_report_success_or_start_services(tmp_path):
         hooks.install()
     assert not (tmp_path/'prefix'/'bin'/'mintbot-desktop').exists()
     assert not any(c[0] == 'systemctl' for c in commands.calls)
+
+
+def test_driver_install_failure_does_not_report_success(tmp_path):
+    commands = FakeCommands()
+    commands.fail = 'install'
+    commands.installed = True  # APT is satisfied; only pip fails
+    hooks = lifecycle(tmp_path, commands)
+    with pytest.raises(subprocess.CalledProcessError):
+        hooks.install()
+    assert not (tmp_path/'prefix'/'bin'/'mintbot-desktop').exists()
 
 
 def test_apt_uses_only_declared_debian_mirrors(tmp_path):

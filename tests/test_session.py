@@ -1,8 +1,10 @@
+import asyncio
 import importlib.util
 import os
 import socket
 import stat
 import subprocess
+import time
 
 import pytest
 
@@ -150,6 +152,44 @@ def test_supervised_restarts_a_dying_child_then_gives_up():
         child.process.wait()
         with pytest.raises(RuntimeError, match='keeps exiting'):
             child.check()
+
+
+async def test_wait_for_display_probes_only_once_the_socket_exists(tmp_path):
+    """A probe before the socket exists falls back to TCP, which the host's
+    address filter drops silently: every service start waited out a TCP
+    connect timeout. The probe must not run until the socket is there."""
+    from mintbot_desktop import __main__ as main
+    x = subprocess.Popen(['sleep', '60'])
+    try:
+        marker = tmp_path / 'probed'
+        probe = ('sh', '-c', f'touch {marker}; test -S {tmp_path}/.X11-unix/X14 || test -e {tmp_path}/.X11-unix/X14')
+        task = asyncio.ensure_future(main.wait_for_display(x, os.environ.copy(), asyncio.Event(), 14, tmp=tmp_path, probe=probe))
+        await asyncio.sleep(.5)
+        assert not task.done() and not marker.exists(), 'probed before the X socket existed'
+        (tmp_path / '.X11-unix').mkdir()
+        (tmp_path / '.X11-unix' / 'X14').touch()
+        await asyncio.wait_for(task, 5)
+        assert marker.exists()
+    finally:
+        x.kill()
+        x.wait()
+
+
+async def test_wait_for_display_bounds_a_hung_probe(tmp_path):
+    from mintbot_desktop import __main__ as main
+    (tmp_path / '.X11-unix').mkdir()
+    (tmp_path / '.X11-unix' / 'X14').touch()
+    x = subprocess.Popen(['sleep', '60'])
+    try:
+        started = time.monotonic()
+        with pytest.raises(RuntimeError, match='readiness timed out'):
+            await main.wait_for_display(x, os.environ.copy(), asyncio.Event(), 14, tmp=tmp_path,
+                                        probe=('sleep', '60'), timeout=.6, probe_timeout=.2)
+        assert time.monotonic() - started < 3
+        assert not subprocess.run(['pgrep', '-f', '^sleep 60$'], capture_output=True).stdout.count(b'\n') > 1
+    finally:
+        x.kill()
+        x.wait()
 
 
 def test_dead_x_server_leftovers_do_not_block_a_restart(tmp_path):

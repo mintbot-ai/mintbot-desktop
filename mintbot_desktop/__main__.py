@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 
+from . import browse
 from .session import (Config, Children, browser_command, display_in_use, gui_environment, port_available,
                       prepare, vnc_command)
 
@@ -23,14 +24,31 @@ def log(message):
     print(f'mintbot-desktop: {message}', file=sys.stderr, flush=True)
 
 
-async def wait_for_display(x, env, stop):
-    """Block until the X server answers, exits, or the session is asked to stop."""
-    for _ in range(100):
+async def wait_for_display(x, env, stop, display, tmp=Path('/tmp'), probe=('xdpyinfo',), timeout=10.0, probe_timeout=2.0):
+    """Block until the X server answers, exits, or the session is asked to stop.
+
+    The probe runs only once the server's socket exists. Asked about a display
+    whose socket is not there yet, libxcb falls back to TCP on localhost:6000+N;
+    under the host's address filter that SYN is dropped, not refused, and the
+    first probe of every service start hung for a whole TCP connect timeout
+    (about two minutes) before the window manager and browser came up. Each
+    probe is bounded for the same reason.
+    """
+    socket_path = tmp / '.X11-unix' / f'X{display}'
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if x.poll() is not None:
             raise RuntimeError(f'X server exited with status {x.returncode} before readiness')
-        check = await asyncio.create_subprocess_exec('xdpyinfo', env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if await check.wait() == 0 or stop.is_set():
+        if stop.is_set():
             return
+        if socket_path.exists():
+            check = await asyncio.create_subprocess_exec(*probe, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                if await asyncio.wait_for(check.wait(), timeout=probe_timeout) == 0:
+                    return
+            except asyncio.TimeoutError:
+                check.kill()
+                await check.wait()
         await asyncio.sleep(.1)
     raise RuntimeError('X server readiness timed out')
 
@@ -77,7 +95,7 @@ async def serve(cfg):
             loop.add_signal_handler(sig, stop.set)
         with Children() as children:
             x = children.start(vnc_command(cfg), env=env)
-            await wait_for_display(x, env, stop)
+            await wait_for_display(x, env, stop, cfg.display)
             if stop.is_set():
                 return
             supervised = [Supervised(children, 'window manager', ['openbox'], env),
@@ -105,7 +123,7 @@ def main():
     parser.add_argument('--state', type=Path, default=Path(os.environ.get('AXP_STATE_DIR', '/var/lib/axp/mintbot.ai/mintbot-desktop')))
     for name in ('display', 'web-port', 'vnc-port', 'cdp-port'):
         parser.add_argument('--'+name, type=int)
-    parser.add_argument('command', choices=('serve', 'prepare', 'env', 'exec'))
+    parser.add_argument('command', choices=('serve', 'prepare', 'env', 'exec', 'browse'))
     parser.add_argument('args', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     settings = args.state / 'session.json'
@@ -119,6 +137,8 @@ def main():
     elif args.command == 'env':
         env = gui_environment(cfg)
         print(json.dumps({key: env[key] for key in ('DISPLAY', 'XAUTHORITY', 'HOME')}))
+    elif args.command == 'browse':
+        browse.main(cfg, args.args[1:] if args.args[:1] == ['--'] else args.args)
     else:
         command = args.args[1:] if args.args[:1] == ['--'] else args.args
         if not command:

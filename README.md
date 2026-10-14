@@ -117,6 +117,19 @@ The installed skill records exact launcher/state locations. `exec -- COMMAND`
 sets DISPLAY, XAUTHORITY and an isolated HOME; it shares the actual panel
 session. The existing Hermes browser tool does not magically attach to it.
 
+## Agent tooling
+
+`mintbot-desktop browse ACTION` drives the session's Chromium through its
+DevTools endpoint with Playwright: `pages`, `open`, `snapshot` (accessibility
+tree), `text`, `click`, `fill`, `type`, `press`, `eval`, `wait`, `screenshot`,
+and `status`. It attaches per command and detaches afterwards; the browser the
+user watches stays the same one. The install hook creates `PREFIX/venv` with
+the Playwright package (no browser download; `MINTBOT_DESKTOP_VENV` overrides
+the location) and the launcher re-executes `browse` under it. APT also
+installs `wmctrl`, `xclip`, `maim` and `at-spi2-core` for windows, clipboard,
+screenshots and Hermes's optional `computer_use` toolset; the skill explains
+when to use which.
+
 ## Development and isolated real GUI smoke
 
 ```sh

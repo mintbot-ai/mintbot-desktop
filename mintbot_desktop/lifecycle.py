@@ -8,10 +8,16 @@ import subprocess
 import sys
 import urllib.request
 
+from .browse import PLAYWRIGHT_REQUIREMENT
 from .session import Config, prepare
 
+# Session: X server, window manager, browser, gateway. Agent tooling: window
+# and clipboard helpers (wmctrl, xclip), screenshots (scrot, maim), the
+# accessibility bus Hermes's computer_use toolset speaks to (at-spi2-core),
+# and a virtualenv for the Playwright browser driver.
 PACKAGES = ['tigervnc-standalone-server', 'tigervnc-tools', 'openbox', 'novnc',
-            'xauth', 'x11-utils', 'xdotool', 'scrot', 'chromium', 'python3-aiohttp', 'python3-pycryptodome']
+            'xauth', 'x11-utils', 'xdotool', 'scrot', 'maim', 'wmctrl', 'xclip', 'at-spi2-core',
+            'chromium', 'python3-aiohttp', 'python3-pycryptodome', 'python3-venv', 'python3-pip']
 OWNER = '<!-- Managed by mintbot.ai/mintbot-desktop -->'
 
 # A machine's own APT sources (provider mirrors, third-party repositories) are
@@ -87,6 +93,21 @@ class Lifecycle:
                 '-o', f'Dir::Etc::SourceParts={apt / "sources.list.d"}',
                 '-o', f'Dir::State::Lists={apt / "lists"}']
 
+    def install_browser_driver(self):
+        """Playwright in the extension's own virtualenv, for `mintbot-desktop browse`.
+
+        It only ever attaches to the session's Chromium over CDP, so no
+        browser download: the pip package is the whole driver.
+        """
+        venv = self.prefix / 'venv'
+        python = venv / 'bin' / 'python'
+        if python.exists() and self.run([str(python), '-c', 'import playwright'], capture_output=True, text=True).returncode == 0:
+            return
+        if not python.exists():
+            self.checked(['/usr/bin/python3', '-m', 'venv', str(venv)])
+        self.checked([str(python), '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',
+                      '--cache-dir', str(self.cache / 'pip'), PLAYWRIGHT_REQUIREMENT])
+
     def install(self):
         if os.geteuid() != 0:
             raise PermissionError('System GUI dependencies require root')
@@ -99,6 +120,7 @@ class Lifecycle:
         if skill.exists() and OWNER not in skill.read_text():
             raise RuntimeError('Refusing to overwrite an unrelated Hermes skill')
         prepare(Config(state=self.state))
+        self.install_browser_driver()
         lib = self.prefix / 'lib'
         lib.mkdir(parents=True, exist_ok=True)
         shutil.copytree(self.source / 'mintbot_desktop', lib / 'mintbot_desktop', dirs_exist_ok=True, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
