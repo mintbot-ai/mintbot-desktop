@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.9
 
 - Separate AXP host-managed lifecycle from standalone foreground operation using
   the existing `AXP_HOST` environment variable. Standalone install reports a
@@ -19,7 +19,6 @@
 - Add isolated lifecycle regressions with injected command execution and real
   filesystem/lock checks. No live installer or service manager is used.
 
-The signed 0.1.8 manifest is intentionally unchanged. Unreleased source changes
-cannot match that published artifact digest; the release digest gate must pass
-again after an authorized signed release. No signing key is needed for these
-lifecycle tests.
+The release gate rebuilds the deterministic artifact, compares both manifest
+digests, and verifies the publisher signature. Lifecycle tests require no signing
+key and never install system packages or change live services.
