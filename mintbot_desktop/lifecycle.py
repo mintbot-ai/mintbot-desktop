@@ -1,4 +1,6 @@
 """AXP lifecycle, with an injectable command runner for side-effect-free tests."""
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -58,19 +60,30 @@ def failure_summary(error):
 
 
 class Lifecycle:
-    unit = 'mintbot-ext-mintbot.ai-mintbot-desktop-svc-desktop-web.service'
 
     def __init__(self, *, source, env=None, run=subprocess.run, os_release=Path('/etc/os-release')):
         self.source = Path(source)
         self.env = dict(os.environ if env is None else env)
         self.run = run
         self.os_release = Path(os_release)
-        self.prefix = Path(self.env.get('AXP_PREFIX', '/opt/mintbot-desktop')).resolve()
-        self.state = Path(self.env.get('AXP_STATE_DIR', '/var/lib/axp/mintbot.ai/mintbot-desktop')).resolve()
+        self.prefix = Path(self.env.get('AXP_PREFIX', '/opt/mintbot-desktop'))
+        self.state = Path(self.env.get('AXP_STATE_DIR', '/var/lib/axp/mintbot.ai/mintbot-desktop'))
         self.cache = Path(self.env.get('AXP_CACHE_DIR', '/var/cache/mintbot-desktop')).resolve()
         self.hermes = Path(self.env.get('AXP_HERMES_HOME') or self.env.get('HERMES_HOME') or Path.home() / '.hermes').resolve()
-        if len(self.state.parts) < 4 or len(self.prefix.parts) < 3 or self.state == self.prefix:
-            raise ValueError('Unsafe install/state paths')
+        self.validate_paths()
+
+    def validate_paths(self):
+        """Only dedicated, canonical directories may become deletion targets."""
+        protected = {Path('/usr/local'), Path('/var/lib'), Path('/var/cache'),
+                     Path.home().resolve(), self.hermes, self.source.resolve()}
+        for path, depth in ((self.prefix, 3), (self.state, 4)):
+            if (not path.is_absolute() or path != path.resolve() or len(path.parts) < depth
+                    or any(target == path or path in target.parents for target in protected)):
+                raise ValueError('Unsafe install/state paths')
+        if (self.prefix == self.state or self.prefix in self.state.parents
+                or self.state in self.prefix.parents or self.prefix == self.cache
+                or self.prefix in self.cache.parents):
+            raise ValueError('Unsafe overlapping install/state/cache paths')
 
     def checked(self, argv):
         result = self.run(argv, env={**os.environ, **self.env, 'DEBIAN_FRONTEND': 'noninteractive'}, capture_output=True, text=True)
@@ -108,7 +121,20 @@ class Lifecycle:
         self.checked([str(python), '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',
                       '--cache-dir', str(self.cache / 'pip'), PLAYWRIGHT_REQUIREMENT])
 
+    def validate_record(self):
+        record = self.state / 'install.json'
+        try:
+            data = json.loads(record.read_text())
+            if (record.is_symlink() or not isinstance(data, dict)
+                    or data.get('prefix') != str(self.prefix)
+                    or data.get('hermes_home') != str(self.hermes)):
+                raise ValueError('mismatched paths')
+        except (OSError, ValueError) as error:
+            raise ValueError('Unsafe or missing installation record; refusing cleanup/adoption') from error
+
     def install(self):
+        if not self.env.get('AXP_HOST') and self.prefix.exists() and any(self.prefix.iterdir()):
+            self.validate_record()
         if os.geteuid() != 0:
             raise PermissionError('System GUI dependencies require root')
         probe = self.run(['dpkg-query', '-W', '-f=${db:Status-Status}\n', *PACKAGES], capture_output=True, text=True)
@@ -120,6 +146,10 @@ class Lifecycle:
         if skill.exists() and OWNER not in skill.read_text():
             raise RuntimeError('Refusing to overwrite an unrelated Hermes skill')
         prepare(Config(state=self.state))
+        # Record ownership before populating the prefix so a failed download is retryable.
+        record = self.state / 'install.json'
+        record.write_text(json.dumps({'hermes_home': str(self.hermes), 'prefix': str(self.prefix)}))
+        record.chmod(0o600)
         self.install_browser_driver()
         lib = self.prefix / 'lib'
         lib.mkdir(parents=True, exist_ok=True)
@@ -131,34 +161,52 @@ class Lifecycle:
         launcher.chmod(0o755)
         skill.parent.mkdir(parents=True, exist_ok=True)
         skill.write_text((self.source / 'skills' / 'mintbot-desktop' / 'SKILL.md').read_text().replace('@LAUNCHER@', shlex.quote(str(launcher))).replace('@STATE@', shlex.quote(str(self.state))))
-        record = self.state / 'install.json'
-        record.write_text(json.dumps({'hermes_home': str(self.hermes), 'prefix': str(self.prefix)}))
-        record.chmod(0o600)
-        # The host creates/starts the declared command unit AFTER install.
-        # No detached child, standalone systemd unit or global service here.
+        # A host owns the declared command service; a hand-install owns no daemon.
+        if not self.env.get('AXP_HOST'):
+            print(f'Installed. Start in the foreground: {shlex.quote(str(launcher))} serve')
+            print('Or run ./enable.sh in the foreground. Stop with Ctrl-C/SIGTERM before disable/uninstall.')
 
     def enable(self):
-        # Activation hooks run before host runtime reconciliation. Disable
-        # removes the managed unit, so only the host can recreate/start it.
-        pass
+        if not self.env.get('AXP_HOST'):
+            # Inherit the terminal: no detached child or service-manager dependency.
+            self.run([str(self.prefix / 'bin' / 'mintbot-desktop'), 'serve'],
+                     env={**os.environ, **self.env}).check_returncode()
+
+    @contextmanager
+    def stopped(self):
+        """Hold the supervisor's existing lock; never signal somebody else's process."""
+        self.validate_paths()
+        path = self.state / 'session.lock'
+        if path.is_symlink():
+            raise ValueError('Unsafe session lock')
+        if not path.exists():
+            yield
+            return
+        with path.open('r') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError('Stop the foreground runner or its owning service before disable/uninstall') from None
+            yield
 
     def disable(self):
-        loaded = self.checked(['systemctl', 'show', '--property=LoadState', '--value', self.unit])
-        if loaded.stdout.strip() != 'not-found':
-            self.checked(['systemctl', 'stop', self.unit])
+        with self.stopped():
+            pass
 
     def uninstall(self):
-        self.disable()  # A failure must never proceed to delete live state.
-        record = self.state / 'install.json'
-        if record.exists():
-            home = Path(json.loads(record.read_text())['hermes_home'])
-            skill = home / 'skills' / 'mintbot-desktop' / 'SKILL.md'
-            if skill.exists() and OWNER in skill.read_text():
-                shutil.rmtree(skill.parent)
-        if self.env.get('AXP_PURGE') == '1' and self.state.exists():
-            shutil.rmtree(self.state)
-        # Host removes its managed unit and install prefix. APT dependencies
-        # are shared system packages and deliberately remain installed.
+        with self.stopped():
+            if self.state.exists() or (not self.env.get('AXP_HOST') and self.prefix.exists()):
+                self.validate_record()
+                skill = self.hermes / 'skills' / 'mintbot-desktop' / 'SKILL.md'
+                if skill != skill.resolve():
+                    raise ValueError('Unsafe managed skill path')
+                if skill.exists() and OWNER in skill.read_text():
+                    shutil.rmtree(skill.parent)
+            if not self.env.get('AXP_HOST') and self.prefix.exists():
+                shutil.rmtree(self.prefix)
+            if self.env.get('AXP_PURGE') == '1' and self.state.exists():
+                shutil.rmtree(self.state)
+        # APT dependencies are shared system packages and deliberately remain.
 
     def health(self):
         settings = json.loads((self.state / 'session.json').read_text())

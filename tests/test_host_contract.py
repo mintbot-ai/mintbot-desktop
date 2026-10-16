@@ -48,8 +48,7 @@ def test_manifest_through_actual_host_runtime_apply(tmp_path, monkeypatch):
     assert service['enforcement'] == 'declared'
     assert any('any host' in note for note in service['notes'])
     assert not any('released' in note for note in service['notes'])
-    from mintbot_desktop.lifecycle import Lifecycle
-    assert service['unit'] == Lifecycle.unit
+    assert service['unit'] == 'mintbot-ext-mintbot.ai-mintbot-desktop-svc-desktop-web.service'
     unit = (tmp_path/'units'/service['unit']).read_text()
     assert 'IPAddressDeny=' not in unit and 'IPAddressAllow=' not in unit
     assert '_PROXY=' not in unit

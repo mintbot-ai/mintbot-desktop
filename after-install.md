@@ -1,14 +1,23 @@
 # mintbot Desktop installed
 
-Open the extension's **Agent desktop** view in the panel. The host can pin it
-beside chat or show it fullscreen. The agent's installed `mintbot-desktop`
-skill controls the same graphical session using the package launcher.
+With an AXP host, open the extension's **Agent desktop** view in the panel.
+The host can pin it beside chat or show it fullscreen. The installed
+`mintbot-desktop` skill controls the same graphical session using the launcher.
+
+For a standalone installation, run the printed `bin/mintbot-desktop serve`
+command (default `/opt/mintbot-desktop/bin/mintbot-desktop serve`), or run
+`./enable.sh` from the retained artifact. Both run in the foreground; neither
+installs a service. See README for an operator-owned supervisor and authenticated
+HTTP/WebSocket proxy setup. There is no standalone host panel.
 
 This is a root-capable desktop with access to this agent server, not your
 personal computer and not a sandbox for untrusted pages. Chromium uses a
-separate profile and the signed network allowlist; unrestricted browsing is
-not enabled. The ordinary Hermes browser tool does not automatically join it.
+separate profile; the manifest declares unrestricted outbound browsing.
+The ordinary Hermes browser tool does not automatically join this session.
 
-Disable stops all desktop programs; save your work first. Your state remains
-for re-enable. Uninstall also retains it unless you explicitly choose purge.
+Save work before stopping. The host stops its own desktop service; standalone
+users must stop their foreground runner or chosen supervisor before disable or
+uninstall. Portable hooks never stop host services and refuse cleanup while the
+session lock is held. Standalone uninstall removes the owned install prefix;
+both modes retain state unless you explicitly choose `AXP_PURGE=1`.
 Never share the service token, VNC credentials, Xauthority or browser profile.

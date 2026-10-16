@@ -6,7 +6,9 @@ An opt-in shared graphical desktop packaged as the official
 product-specific panel route or a Hermes core patch.
 
 Nothing runs until the user installs the extension and accepts its permissions.
-This beta targets Debian 13 with systemd and an AXP 0.5 Mintbot host. Desktop
+This beta targets Debian 13. An AXP 0.5 host can manage the desktop service and
+panel integration; a hostless installation uses the foreground runner (no
+systemd requirement). Desktop
 programs run as the agent service account, normally **root**. Chromium uses
 `--no-sandbox`; this is trusted full-server access, **not** an isolation boundary
 for untrusted websites. Other distros, particularly Ubuntu's snap Chromium,
@@ -90,32 +92,90 @@ byte-pinned in the source artifact.
 
 ## Lifecycle
 
+A nonempty `AXP_HOST` selects **host-managed** mode: the host owns activation,
+deactivation and prefix removal through the unchanged `component_map` command.
+With `AXP_HOST` unset or empty, the hooks use **standalone** mode. Do not set it
+in a hand-run installation: it is a host identifier, not a service-manager name.
+Hosts that set it must implement the declared command-service mapping.
+
 * **install / upgrade:** idempotent APT dependency check/install, package and
-  launcher copy, private credentials/state, packaged stock-Hermes skill. It
-  does not start a service: host runtime activation follows successful install.
-* **enable:** returns without starting a service. Activation hooks run before
-  host runtime reconciliation; the host recreates and starts its managed unit
-  after this hook succeeds, and reports activation failures.
-* **disable:** stops that unit and all its child GUI processes, retaining state.
-  Warn users about unsaved work before disabling.
+  launcher copy, private credentials/state, packaged stock-Hermes skill. This
+  completes installation without starting or detaching a process. Standalone
+  mode prints the exact foreground start command; host activation follows the hook.
+* **enable:** host mode returns for host activation; standalone mode runs the
+  installed launcher with `serve` in the foreground, inheriting the terminal.
+  It blocks until stopped and propagates failure. Prefer the launcher itself
+  when configuring a service manager.
+* **disable:** never calls a service manager or sends signals. The host must
+  stop its service first (AXP §6.5); a standalone operator stops their foreground
+  runner or their own service first. An active session lock returns failure
+  with that instruction, without changing files. A stale unlocked file is safe.
 * **health:** bearer-authenticated loopback HTTP probe, never via an HTTP proxy.
-* **uninstall:** stop first; any stop error prevents deletion. Remove only the
-  managed skill. Retain credentials/profile unless `AXP_PURGE=1`; the host owns
-  removal of its unit and install prefix. Shared APT packages remain installed.
+* **uninstall:** refuses an active session before cleanup. Removes only the
+  owned Hermes skill; standalone mode also removes its dedicated install prefix.
+  Host mode leaves prefix and service removal to the host. Credentials/profile
+  survive unless `AXP_PURGE=1`. Shared APT packages and download cache remain.
 
-The host unit name follows its existing command-service mapping:
-`mintbot-ext-mintbot.ai-mintbot-desktop-svc-desktop-web.service`. A missing unit
-is tolerated on stop; a failed start/stop, dependency install, credential setup
-or health probe returns failure. No live system installer is executed by tests;
-APT and systemctl calls are injected fakes in lifecycle unit tests.
+Cleanup requires an intact `state/install.json` matching the prefix and Hermes
+home. Root/shared, relative, symlinked and overlapping prefix/state paths are
+refused before cleanup; a prefix must not contain the artifact source, Hermes
+home or cache. Standalone install refuses to adopt a nonempty unowned prefix.
+Use a dedicated directory, never a shared `/usr/local` or a home directory;
+anything later placed in that owned prefix is removed on standalone uninstall.
+Retained state permits reinstall and a later explicit purge. A missing or
+mismatched ownership record requires operator inspection, not forced deletion.
+These checks protect against configuration mistakes, not hostile concurrent root
+filesystem changes. Stop automatic restarts and avoid concurrent lifecycle runs.
 
-The install hook uses `AXP_PREFIX`, `AXP_STATE_DIR`, `AXP_HERMES_HOME` /
-`HERMES_HOME`. Without host paths it uses `/opt/mintbot-desktop`,
-`/var/lib/axp/mintbot.ai/mintbot-desktop`, and the current user's `.hermes`.
-No standalone unit is installed: outside AXP, use the foreground runner below.
+The install hook uses `AXP_PREFIX`, `AXP_STATE_DIR`, `AXP_CACHE_DIR`, and
+`AXP_HERMES_HOME` / `HERMES_HOME`. Without overrides it uses
+`/opt/mintbot-desktop`, `/var/lib/axp/mintbot.ai/mintbot-desktop`,
+`/var/cache/mintbot-desktop`, and the current user's `.hermes`. Installing system
+GUI dependencies requires root; no AXP host or running systemd is needed.
 The installed skill records exact launcher/state locations. `exec -- COMMAND`
-sets DISPLAY, XAUTHORITY and an isolated HOME; it shares the actual panel
+sets DISPLAY, XAUTHORITY and an isolated HOME; it shares the actual desktop
 session. The existing Hermes browser tool does not magically attach to it.
+
+### Standalone foreground or operator-owned service
+
+From a reviewed, unpacked artifact on Debian 13, as root (no AXP variables needed):
+
+```sh
+./install.sh
+/opt/mintbot-desktop/bin/mintbot-desktop serve
+# Ctrl-C stops this runner and its children, preserving state.
+# Alternatively: ./enable.sh (same foreground workflow, not a daemon installer).
+```
+
+Keep the unpacked artifact for its lifecycle scripts. For custom locations,
+export the same absolute `AXP_PREFIX`, `AXP_STATE_DIR`, `AXP_CACHE_DIR` and
+`AXP_HERMES_HOME` on every hook invocation. In a second terminal, `./health.sh`
+checks the running gateway; the installed launcher also provides `env`, `exec`
+and `browse` as described below.
+
+For unattended operation, configure **your chosen** supervisor to run
+`/opt/mintbot-desktop/bin/mintbot-desktop serve` as its foreground command,
+with the same account/environment and optional restart-on-failure policy. Send
+SIGTERM and wait for exit when stopping; the runner cleans up its child process
+groups. Disable that supervisor's automatic restarts before uninstall. The
+package installs no unit, chooses no unit name, and never stops Mintbot or other
+host services. Do not run the host-managed service and a standalone runner
+against the same state concurrently.
+
+After stopping the runner/service, from the retained artifact:
+
+```sh
+./disable.sh                  # verifies stopped; preserves files and data
+./uninstall.sh                # removes owned prefix/skill; retains state
+AXP_PURGE=1 ./uninstall.sh     # optionally delete retained credentials/profile
+```
+
+Standalone installation bypasses AXP signature verification, consent, pinning,
+freshness and host containment. It does not provide the host's panel/proxy.
+The gateway remains authenticated and loopback-only: browser access needs your
+own trusted HTTP/WebSocket proxy injecting the bearer token server-side, with
+the authorization and origin checks described above. Never expose CDP or embed
+the token in a URL or browser code.
 
 ## Agent tooling
 
