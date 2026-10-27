@@ -13,11 +13,12 @@ import urllib.request
 from .browse import PLAYWRIGHT_REQUIREMENT
 from .session import Config, prepare
 
-# Session: X server, window manager, browser, gateway. Agent tooling: window
-# and clipboard helpers (wmctrl, xclip), screenshots (scrot, maim), the
-# accessibility bus Hermes's computer_use toolset speaks to (at-spi2-core),
-# and a virtualenv for the Playwright browser driver.
-PACKAGES = ['tigervnc-standalone-server', 'tigervnc-tools', 'openbox', 'novnc',
+# Session: X server, window manager, desktop icons (idesk: the browser icon),
+# browser, gateway. Agent tooling: window and clipboard helpers (wmctrl,
+# xclip), screenshots (scrot, maim), the accessibility bus Hermes's
+# computer_use toolset speaks to (at-spi2-core), and a virtualenv for the
+# Playwright browser driver.
+PACKAGES = ['tigervnc-standalone-server', 'tigervnc-tools', 'openbox', 'idesk', 'novnc',
             'xauth', 'x11-utils', 'xdotool', 'scrot', 'maim', 'wmctrl', 'xclip', 'at-spi2-core',
             'chromium', 'python3-aiohttp', 'python3-pycryptodome', 'python3-venv', 'python3-pip']
 OWNER = '<!-- Managed by mintbot.ai/mintbot-desktop -->'

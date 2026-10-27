@@ -55,3 +55,10 @@ def test_manifest_through_actual_host_runtime_apply(tmp_path, monkeypatch):
     assert 'PrivateTmp=' not in unit and 'ProtectSystem=' not in unit
     assert f'ExecStart={tmp_path}/prefix/bin/mintbot-desktop serve' in unit
     assert any('enable' in call and service['unit'] in call for call in calls)
+    # One host-managed service, the gateway: the X server, the window manager,
+    # the desktop icons and the browser are its children. The host's restart
+    # policy covers the gateway alone; a browser the user closed stays
+    # closed (`Once` in the supervisor), nothing of the host brings it back.
+    assert len(result['services']) == 1
+    assert m['targets'][0]['component_map']['services']['restart'] == 'on-failure'
+    assert m['targets'][0]['component_map']['services']['command'] == ['bin/mintbot-desktop', 'serve']

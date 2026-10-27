@@ -4,9 +4,11 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shlex
 import signal
 import socket
 import subprocess
+import sys
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,95 @@ def browser_command(cfg, env):
     if proxy:
         args += [f'--proxy-server={proxy}']
     return args + ['about:blank']
+
+
+# The browser's own icon, shipped by Debian's chromium package; idesk and the
+# openbox menu point at it.
+BROWSER_ICON = '/usr/share/icons/hicolor/64x64/apps/chromium.png'
+
+
+def browser_launcher(cfg):
+    """The command the desktop icon and the openbox menu run to (re)open the browser.
+
+    It names the interpreter and the package's own directory outright: idesk
+    and openbox run it from inside the session, where the launcher script's
+    environment is not a given. Chromium itself turns a second start on the
+    same profile into a new window of the running instance.
+    """
+    package_root = Path(__file__).resolve().parents[1]
+    return ['env', f'PYTHONPATH={package_root}', sys.executable, '-m', 'mintbot_desktop',
+            '--state', str(cfg.state), 'browser']
+
+
+IDESK_CONFIG = """table Config
+  FontName: sans
+  FontSize: 10
+  FontColor: #ffffff
+  Locked: true
+  Transparency: 150
+  Shadow: true
+  ShadowColor: #000000
+  ShadowX: 1
+  ShadowY: 1
+  Bold: false
+  ClickDelay: 300
+  IconSnap: true
+  SnapWidth: 55
+  SnapHeight: 100
+  SnapOrigin: TopLeft
+  SnapShadow: true
+  SnapShadowTrans: 200
+  CaptionOnHover: false
+  Background.Delay: 0
+  Background.Source: None
+  Background.File: None
+  Background.Mode: Center
+  Background.Color: #2b3440
+end
+table Actions
+  Lock: control right doubleClk
+  Reload: middle doubleClk
+  Drag: left hold
+  EndDrag: left singleClk
+  Execute[0]: left doubleClk
+  Execute[1]: right doubleClk
+end
+"""
+
+IDESK_ICON = """table Icon
+  Caption: Browser
+  Command: {command}
+  Icon: {icon}
+  Width: 64
+  Height: 64
+  X: 40
+  Y: 40
+end
+"""
+
+OPENBOX_MENU = """<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+  <menu id="root-menu" label="mintbot Desktop">
+    <item label="Browser">
+      <action name="Execute"><execute>{command}</execute></action>
+    </item>
+  </menu>
+</openbox_menu>
+"""
+
+
+def write_desktop(cfg):
+    """The desktop icon (idesk, read from HOME) and the openbox root menu (read
+    from XDG_CONFIG_HOME): both open the browser the user closed. Rewritten
+    on every start, so a moved state directory or interpreter is followed."""
+    command = shlex.join(browser_launcher(cfg))
+    icons = cfg.state / '.idesktop'
+    icons.mkdir(mode=0o700, exist_ok=True)
+    (cfg.state / '.ideskrc').write_text(IDESK_CONFIG)
+    (icons / 'browser.lnk').write_text(IDESK_ICON.format(command=command, icon=BROWSER_ICON))
+    menu = cfg.state / 'config' / 'openbox'
+    menu.mkdir(parents=True, exist_ok=True)
+    (menu / 'menu.xml').write_text(OPENBOX_MENU.format(command=command.replace('&', '&amp;').replace('<', '&lt;')))
 
 
 VNC_SECRET_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'

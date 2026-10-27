@@ -324,7 +324,11 @@ def main(cfg, argv, execve=os.execve):
         return
     from playwright.sync_api import sync_playwright
     with sync_playwright() as playwright:
-        browser = playwright.chromium.connect_over_cdp(endpoint(cfg), timeout=10_000)
+        try:
+            browser = playwright.chromium.connect_over_cdp(endpoint(cfg), timeout=10_000)
+        except Exception as error:  # the driver's own error class is not importable without it
+            raise RuntimeError(f'the browser does not answer on {endpoint(cfg)} (closed by the user?); '
+                               f'`mintbot-desktop browser` opens it again: {str(error).strip().splitlines()[0]}') from None
         try:
             for context in browser.contexts:
                 context.set_default_timeout(10_000)

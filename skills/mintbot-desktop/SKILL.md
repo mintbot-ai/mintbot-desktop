@@ -26,7 +26,10 @@ Pick the cheapest channel that does the job, in this order:
 
 Chromium on this display is the same one the user sees in the panel. `browse`
 attaches to it over CDP (127.0.0.1:9223) with Playwright and detaches after
-every command; it never starts or closes the browser.
+every command; it never closes the browser. The browser starts with the
+desktop and is not restarted when the user closes it: `@LAUNCHER@ browser`
+opens it again (the desktop icon and the right-click menu do the same), and
+`browse` tells you when that is needed.
 
 ```sh
 @LAUNCHER@ browse status                        # CDP reachable? driver installed?

@@ -66,6 +66,90 @@ def test_install_idempotently_converges_without_starting_host_service(tmp_path):
     assert json.loads(result.stdout)['XAUTHORITY'] == str(tmp_path/'state'/'Xauthority')
 
 
+def test_install_declares_the_desktop_icon_package(tmp_path):
+    """idesk draws the browser icon on the desktop; the install hook installs
+    it with the other GUI packages, so an upgrade of an older install adds it."""
+    from mintbot_desktop.lifecycle import PACKAGES
+    assert 'idesk' in PACKAGES and 'chromium' in PACKAGES and 'xdotool' in PACKAGES
+    commands = FakeCommands()
+    lifecycle(tmp_path, commands).install()
+    install = next(c for c in commands.calls if c[:2] == ['apt-get', 'install'])
+    assert 'idesk' in install
+    probe = next(c for c in commands.calls if c[0] == 'dpkg-query')
+    assert 'idesk' in probe
+
+
+class FakeChildren:
+    """Children.start without processes: each start hands out a process whose
+    exit the test controls."""
+    class Process:
+        def __init__(self):
+            self.returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    def __init__(self):
+        self.started = []
+
+    def start(self, argv, env=None):
+        process = self.Process()
+        self.started.append((argv, process))
+        return process
+
+
+def test_the_browser_is_started_once_and_never_restarted(capsys):
+    """The user closes the browser like any program; a browser that came
+    back on its own would be in their way. The desktop icon and the menu
+    open it again instead."""
+    from mintbot_desktop.__main__ import Once
+    children = FakeChildren()
+    browser = Once(children, 'browser', ['chromium'], {})
+    assert [argv for argv, _ in children.started] == [['chromium']]
+    browser.check()
+    children.started[0][1].returncode = 0
+    for _ in range(5):
+        browser.check()
+    assert len(children.started) == 1
+    assert capsys.readouterr().err.count('browser exited with status 0; not restarted') == 1
+
+
+def test_the_window_manager_and_icons_stay_supervised():
+    from mintbot_desktop.__main__ import RESTART_LIMIT, Supervised
+    children = FakeChildren()
+    openbox = Supervised(children, 'window manager', ['openbox'], {})
+    for _ in range(RESTART_LIMIT):
+        children.started[-1][1].returncode = 1
+        openbox.check()
+    assert len(children.started) == RESTART_LIMIT + 1
+    children.started[-1][1].returncode = 1
+    with pytest.raises(RuntimeError, match='keeps exiting'):
+        openbox.check()
+
+
+def test_desktop_icon_and_menu_open_the_browser(tmp_path):
+    """idesk reads its icon from HOME, openbox its root menu from
+    XDG_CONFIG_HOME: both are the state directory, both run the package's
+    own `browser` command with the interpreter and path spelled out."""
+    import shlex
+    from mintbot_desktop.session import BROWSER_ICON, Config, browser_launcher, write_desktop
+    cfg = Config(state=tmp_path / 'state')
+    cfg.state.mkdir()
+    write_desktop(cfg)
+    write_desktop(cfg)  # every start rewrites; nothing accumulates
+    command = browser_launcher(cfg)
+    assert command[-1] == 'browser' and command[-3:-1] == ['--state', str(cfg.state)]
+    assert command[:2] == ['env', f'PYTHONPATH={ROOT}'] and '-m' in command and 'mintbot_desktop' in command
+    icon = (cfg.state / '.idesktop' / 'browser.lnk').read_text()
+    assert f'Command: {shlex.join(command)}' in icon
+    assert f'Icon: {BROWSER_ICON}' in icon and BROWSER_ICON.endswith('chromium.png')
+    assert 'table Config' in (cfg.state / '.ideskrc').read_text()
+    menu = (cfg.state / 'config' / 'openbox' / 'menu.xml').read_text()
+    assert 'id="root-menu"' in menu
+    assert f'<execute>{shlex.join(command)}</execute>' in menu
+    assert sorted(p.name for p in (cfg.state / '.idesktop').iterdir()) == ['browser.lnk']
+
+
 def test_apt_failure_does_not_report_success_or_start_services(tmp_path):
     commands = FakeCommands()
     commands.fail = 'update'

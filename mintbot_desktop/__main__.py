@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -12,7 +13,7 @@ import time
 
 from . import browse
 from .session import (Config, Children, browser_command, display_in_use, gui_environment, port_available,
-                      prepare, vnc_command)
+                      prepare, vnc_command, write_desktop)
 
 
 # A window manager or browser that dies this often is broken, not unlucky.
@@ -72,6 +73,26 @@ class Supervised:
         self.process = self.children.start(self.argv, env=self.env)
 
 
+class Once:
+    """A child started with the session and left alone afterwards.
+
+    The browser: the user closes it like any program, and a browser that
+    reappeared on its own would be in their way. The desktop icon and the
+    openbox menu open it again (`mintbot-desktop browser`), the agent's
+    `browse` says so when CDP does not answer.
+    """
+    def __init__(self, children, name, argv, env):
+        self.name = name
+        self.process = children.start(argv, env=env)
+        self.reported = False
+
+    def check(self):
+        if self.process.poll() is None or self.reported:
+            return
+        self.reported = True
+        log(f'{self.name} exited with status {self.process.returncode}; not restarted')
+
+
 async def serve(cfg):
     from aiohttp import web
     from .app import create_app
@@ -98,8 +119,15 @@ async def serve(cfg):
             await wait_for_display(x, env, stop, cfg.display)
             if stop.is_set():
                 return
-            supervised = [Supervised(children, 'window manager', ['openbox'], env),
-                          Supervised(children, 'browser', browser_command(cfg, env), env)]
+            write_desktop(cfg)
+            supervised = [Supervised(children, 'window manager', ['openbox'], env)]
+            # The icon layer is optional (an older standalone install without
+            # the package); the openbox root menu opens the browser either way.
+            if shutil.which('idesk'):
+                supervised.append(Supervised(children, 'desktop icons', ['idesk'], env))
+            else:
+                log('idesk is not installed; the browser icon is missing, the openbox menu still opens it')
+            supervised.append(Once(children, 'browser', browser_command(cfg, env), env))
             app = create_app(token=(cfg.state / 'token').read_text(), password=(cfg.state / 'vnc-secret').read_text(), rfb_port=cfg.vnc_port)
             runner = web.AppRunner(app, access_log=None)
             try:
@@ -123,7 +151,7 @@ def main():
     parser.add_argument('--state', type=Path, default=Path(os.environ.get('AXP_STATE_DIR', '/var/lib/axp/mintbot.ai/mintbot-desktop')))
     for name in ('display', 'web-port', 'vnc-port', 'cdp-port'):
         parser.add_argument('--'+name, type=int)
-    parser.add_argument('command', choices=('serve', 'prepare', 'env', 'exec', 'browse'))
+    parser.add_argument('command', choices=('serve', 'prepare', 'env', 'exec', 'browse', 'browser'))
     parser.add_argument('args', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     settings = args.state / 'session.json'
@@ -139,6 +167,12 @@ def main():
         print(json.dumps({key: env[key] for key in ('DISPLAY', 'XAUTHORITY', 'HOME')}))
     elif args.command == 'browse':
         browse.main(cfg, args.args[1:] if args.args[:1] == ['--'] else args.args)
+    elif args.command == 'browser':
+        # (Re)open the session's Chromium: the desktop icon, the openbox menu
+        # and the agent run this after the user closed it.
+        env = gui_environment(cfg)
+        command = browser_command(cfg, env)
+        os.execvpe(command[0], command, env)
     else:
         command = args.args[1:] if args.args[:1] == ['--'] else args.args
         if not command:
