@@ -10,7 +10,10 @@ In short:
 - `main` is the dev channel. Every push publishes a signed dev build
   (`scripts/release-dev.sh`, run by `.github/workflows/dev-build.yml`) that only
   DEV agents can install; LIVE agents never see one.
-- DEV's Beaver "AXP package tests" (CatOffice) install the second-newest dev
+- Every published dev build queues DEV's Beaver "AXP package tests" (the
+  workflow's last step reports it to CatOffice's `/beaver/dev-build` with the
+  repository secret `BEAVER_DEV_BUILD_TOKEN`; CatOffice's button reruns them).
+  They install the second-newest dev
   build and upgrade it to the newest, driving the real panel mount and desktop.
   A feature is not done until that journey (`beaver/journeys/axp_packages/
   test_mintbot_desktop.py` in the mintbot repository) covers it.

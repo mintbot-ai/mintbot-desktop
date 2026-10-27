@@ -74,4 +74,9 @@ gh release list --repo "${REPO}" --limit 100 --json tagName --jq '.[].tagName' \
       gh release delete "${old}" --repo "${REPO}" --cleanup-tag --yes
     done
 
+# The workflow's next step queues DEV's Beaver package tests for this build.
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  printf 'version=%s\ncommit=%s\n' "${VERSION}" "${COMMIT}" >> "${GITHUB_OUTPUT}"
+fi
+
 echo "published v${VERSION}: https://github.com/${REPO}/releases/download/v${VERSION}/agent-extension.json"

@@ -37,6 +37,7 @@ jobs:
         # Pinned: the signing tool is part of what a dev build is trusted for.
         run: pip install "axp[crypto] @ git+https://github.com/mintbot-ai/agent-extension@2c5784563b658d4e075e52d65bc8bd61b403e7b2"
       - name: Publish the dev build
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           DEV_SIGNING_KEY: ${{ secrets.AXP_DEV_SIGNING_KEY }}
@@ -47,3 +48,26 @@ jobs:
           (umask 077 && printf '%s\n' "${DEV_SIGNING_KEY}" > "${key}")
           trap 'rm -f "${key}"' EXIT
           AXP_SIGNING_KEY="${key}" scripts/release-dev.sh ${COMMIT}
+      - name: Queue the DEV Beaver package tests for this build
+        # The build's completion, not the push, starts the tests: Beaver's
+        # axp_packages journeys install whatever the newest dev builds are when
+        # the run starts. DEV CatOffice queues one run, and its runner's
+        # newest-wins rule retires an older queued or in-flight package run, so
+        # two quick builds end in one run proving the newest pair. The token
+        # opens exactly this route on DEV (mintbot's apply.py mints it; the
+        # flow: mintbot developer_tools/agent_skills/axp_package_release.md).
+        # A failed report fails the workflow while the dev build stays
+        # published: press CatOffice -> Beaver -> Run AXP package tests.
+        env:
+          DEV_BUILD_TOKEN: ${{ secrets.BEAVER_DEV_BUILD_TOKEN }}
+          VERSION: ${{ steps.publish.outputs.version }}
+          COMMIT: ${{ steps.publish.outputs.commit }}
+        run: |
+          [ -n "${DEV_BUILD_TOKEN}" ] || { echo "the BEAVER_DEV_BUILD_TOKEN secret is not set: the DEV package tests were not queued" >&2; exit 1; }
+          [ -n "${VERSION}" ] || { echo "release-dev.sh reported no version: the DEV package tests were not queued" >&2; exit 1; }
+          body="$(jq -nc --arg package mintbot-desktop --arg version "${VERSION}" --arg commit "${COMMIT}" \
+            '{package: $package, version: $version, commit: $commit}')"
+          curl --silent --show-error --fail-with-body --retry 3 --max-time 30 \
+            --header "X-Dashboard-Token: ${DEV_BUILD_TOKEN}" --header 'Content-Type: application/json' \
+            --data "${body}" https://cat.mintbot.dev/api/beaver/dev-build
+          echo

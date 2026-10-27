@@ -241,9 +241,35 @@ def test_the_workflow_publishes_main_with_the_dev_key_alone():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "push:\n    branches: [main]" in text and "release:\n    types: [published]" in text
     assert "!github.event.release.prerelease" in text, "its own dev builds start no further build"
-    assert re.findall(r"secrets\.\w+", text) == ["secrets.AXP_DEV_SIGNING_KEY"], "the release key is never a secret"
+    assert re.findall(r"secrets\.\w+", text) == ["secrets.AXP_DEV_SIGNING_KEY", "secrets.BEAVER_DEV_BUILD_TOKEN"], \
+        "the release key is never a secret; the dev-build token opens one DEV route"
     assert re.search(r"agent-extension@[0-9a-f]{40}\"", text), "the axp CLI is pinned to a commit"
     assert "permissions:\n  contents: write\n" in text and "scripts/release-dev.sh" in text
+
+
+def test_the_workflow_reports_the_published_build_to_dev_beaver():
+    """The build's completion queues DEV's AXP package tests: the last step
+    posts the version release-dev.sh reported to CatOffice's dev-build route,
+    with the token that opens exactly that route, and fails when refused."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    publish, report = text.split("- name: Queue the DEV Beaver package tests")
+    assert "id: publish" in publish
+    assert "steps.publish.outputs.version" in report and "steps.publish.outputs.commit" in report
+    assert "https://cat.mintbot.dev/api/beaver/dev-build" in report
+    assert "--arg package mintbot-desktop " in report
+    assert "X-Dashboard-Token: ${DEV_BUILD_TOKEN}" in report and "secrets.BEAVER_DEV_BUILD_TOKEN" in report
+    assert "--fail-with-body" in report, "a refused report fails the workflow"
+    assert "- name:" not in report.split("run: |")[1], "the report is the last step"
+
+
+def test_release_dev_tells_the_workflow_what_it_published(tmp_path, publisher, clone):
+    output = tmp_path / "github-output"
+    env = {k: v for k, v in publisher.items() if k != "AXP_PROMOTE_FROM"}
+    result = _run(clone / "scripts" / "release-dev.sh", env={**env, "GITHUB_OUTPUT": str(output)}, cwd=clone)
+    assert result.returncode == 0, result.stdout + result.stderr
+    version = re.search(r"^published v(\S+): ", result.stdout, re.M).group(1)
+    commit = _git(clone, "rev-parse", "HEAD").strip()
+    assert output.read_text(encoding="utf-8") == f"version={version}\ncommit={commit}\n"
 
 
 def test_release_dev_publishes_a_dev_build_and_keeps_the_newest_two(tmp_path, publisher, clone):

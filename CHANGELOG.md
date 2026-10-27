@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `.github/workflows/dev-build.yml` reports every published dev build to DEV
+  CatOffice (`POST /beaver/dev-build`, repository secret
+  `BEAVER_DEV_BUILD_TOKEN`), which queues Beaver's AXP package tests on it;
+  `scripts/release-dev.sh` tells the workflow the version and commit it
+  published (`GITHUB_OUTPUT`).
 - Dev builds: `.github/workflows/dev-build.yml` runs `scripts/release-dev.sh`
   on every push to `main`, publishing `<next patch>-dev.<UTC timestamp>` on the
   `dev` channel as a GitHub pre-release, signed by a dev key

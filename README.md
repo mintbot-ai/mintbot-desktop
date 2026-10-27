@@ -284,7 +284,9 @@ dev key:
 AXP_SIGNING_KEY=/path/to/mintbot.ai-mintbot-desktop-dev.key scripts/release-dev.sh [<commit>]
 ```
 
-**DEV tests the dev builds.** Beaver's "AXP package tests" (CatOffice on DEV)
+**DEV tests the dev builds.** Beaver's "AXP package tests" (queued by the
+workflow's last step as soon as a build is published, repository secret
+`BEAVER_DEV_BUILD_TOKEN`; CatOffice's button on DEV reruns them)
 install the second-newest dev build and upgrade it to the newest, through the
 real panel mount, WebSocket/RFB framebuffer and noVNC canvas.
 
