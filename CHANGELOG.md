@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.10
+
+- The browser starts once with the desktop and is not restarted when the
+  user closes it (the window manager and the icon layer stay supervised). A
+  closed browser is opened again by the new desktop icon, by the openbox
+  right-click menu, or by `mintbot-desktop browser`; `browse` says so when
+  CDP does not answer.
+- A desktop icon for the browser, drawn by `idesk` (new APT dependency,
+  installed by the install/upgrade hook) with Chromium's own icon; the icon
+  file and the openbox root menu are written to the state directory on every
+  start. Without `idesk` the menu entry still works.
+- The browser window carries Chromium's own `_NET_WM_ICON` and `WM_CLASS`
+  (`Chromium`), which openbox shows; the real-GUI smoke test now checks both,
+  closes the browser, verifies it stays closed, and reopens it.
+
 ## 0.1.9
 
 - Separate AXP host-managed lifecycle from standalone foreground operation using
