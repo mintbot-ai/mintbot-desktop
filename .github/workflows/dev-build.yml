@@ -1,0 +1,49 @@
+# Publish a dev build of main (scripts/release-dev.sh): on every push, and
+# right after a release so that a dev build stays the newest candidate of the
+# hosts tracking dev. Signed by the dev key (secret AXP_DEV_SIGNING_KEY), which
+# only mintbot.dev's key directory lists; the release key never leaves the
+# publisher's machine.
+name: dev build
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dev-build
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # The dev builds this job publishes itself are pre-releases (and a release
+    # created with the workflow token starts no workflow anyway).
+    if: github.event_name != 'release' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the axp CLI
+        # Pinned: the signing tool is part of what a dev build is trusted for.
+        run: pip install "axp[crypto] @ git+https://github.com/mintbot-ai/agent-extension@2c5784563b658d4e075e52d65bc8bd61b403e7b2"
+      - name: Publish the dev build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEV_SIGNING_KEY: ${{ secrets.AXP_DEV_SIGNING_KEY }}
+          # A push builds its own commit; a release or a manual run builds main.
+          COMMIT: ${{ github.event_name == 'push' && github.sha || '' }}
+        run: |
+          key="${RUNNER_TEMP}/dev-signing.key"
+          (umask 077 && printf '%s\n' "${DEV_SIGNING_KEY}" > "${key}")
+          trap 'rm -f "${key}"' EXIT
+          AXP_SIGNING_KEY="${key}" scripts/release-dev.sh ${COMMIT}

@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Dev builds: `.github/workflows/dev-build.yml` runs `scripts/release-dev.sh`
+  on every push to `main`, publishing `<next patch>-dev.<UTC timestamp>` on the
+  `dev` channel as a GitHub pre-release, signed by a dev key
+  (`mintbot.ai-mintbot-desktop-dev-2026`) that only mintbot.dev's key directory
+  lists (`agent-extension-keys.dev.json`); LIVE agents refuse them. Only the
+  newest two dev builds are kept.
+- `scripts/release.sh` takes the tree to sign (`RELEASE_TREE`), the channel
+  (`AXP_CHANNEL`) and the signing key id (`AXP_SIGNING_KEY_ID`, checked
+  against `AXP_KEYDIR`), and gates a release on the package's own channel: it
+  names the dev build it promotes (`AXP_PROMOTE_FROM`), refuses a dirty
+  checkout, and the mintbot repository's promote check must confirm a green
+  DEV Beaver package journey on that build before anything is signed.
+- `AGENTS.md` points at the mintbot repository's AXP package flow.
+
 ## 0.1.10
 
 - The browser starts once with the desktop and is not restarted when the

@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tarfile
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -55,20 +57,35 @@ def test_release_fails_closed_without_private_key(tmp_path):
     assert 'AXP_SIGNING_KEY' in result.stderr
 
 
+def _git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(['git', '-C', str(ROOT), *args], capture_output=True, text=True)
+
+
 def test_checked_in_signature_and_artifact_digest(tmp_path):
+    """The checked-in manifest is the last release's, signed and internally
+    consistent. Between releases the tree moves on (main is the dev channel;
+    dev builds are signed at build time from a scratch export), so the rebuilt
+    artifact matches the manifest's digest only at the release commit itself,
+    the one tagged v<version>."""
     import shutil
     manifest = json.loads((ROOT/'agent-extension.json').read_text())
     if not manifest.get('signature'):
         raise AssertionError('Release manifest must be signed before committing')
     version = manifest['identity']['version']
-    result = subprocess.run(['bash', str(ROOT/'scripts/build-artifact.sh'), version, str(tmp_path)], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    digest = hashlib.sha256((tmp_path/f'mintbot-desktop-{version}.tar.gz').read_bytes()).hexdigest()
-    assert digest == manifest['release']['artifact']['sha256']
+    digest = manifest['release']['artifact']['sha256']
     assert digest == manifest['targets'][0]['delivery']['sha256']
+    assert manifest['release']['artifact']['url'].endswith(f'/v{version}/mintbot-desktop-{version}.tar.gz')
     if shutil.which('axp'):
         result = subprocess.run(['axp', 'verify', str(ROOT/'agent-extension.json'), '--keydir', str(ROOT/'agent-extension-keys.json')], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
+    tag, head = _git('rev-parse', '--verify', '--quiet', f'v{version}^{{commit}}'), _git('rev-parse', 'HEAD')
+    if tag.returncode != 0 or tag.stdout.strip() != head.stdout.strip():
+        pytest.skip(f'HEAD is not the v{version} release commit; the tree is dev-channel material')
+    if _git('status', '--porcelain').stdout.strip():
+        pytest.skip('the checkout has uncommitted changes; the digest is a claim about the release commit')
+    result = subprocess.run(['bash', str(ROOT/'scripts/build-artifact.sh'), version, str(tmp_path)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert hashlib.sha256((tmp_path/f'mintbot-desktop-{version}.tar.gz').read_bytes()).hexdigest() == digest
 
 
 def test_signing_directory_scopes_desktop_key():

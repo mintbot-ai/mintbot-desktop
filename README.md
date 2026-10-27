@@ -262,20 +262,54 @@ Debian 13 agent with the new host/protocol code and consent, verify:
    Upgrade preserves state; uninstall retains state, explicit purge deletes it.
    Unrelated `:12` / 5912 / 6080 remain unchanged throughout.
 
-## Local signed release
+## Releasing
+
+mintbot Desktop follows the mintbot platform's AXP package flow, written up in
+the mintbot repository (`developer_tools/agent_skills/axp_package_release.md`).
+
+**Dev builds publish themselves.** `main` is the dev channel:
+`.github/workflows/dev-build.yml` runs `scripts/release-dev.sh` on every push
+to `main` (and right after each release). It publishes the commit as
+`<next patch>-dev.<UTC timestamp>` on the `dev` channel, a GitHub pre-release,
+and keeps only the newest two dev builds. Dev builds are signed by a separate
+dev key (repository secret `AXP_DEV_SIGNING_KEY`,
+`mintbot.ai-mintbot-desktop-dev-2026`). Only `agent-extension-keys.dev.json`,
+the key directory mintbot.dev serves to DEV agents, lists it; mintbot.ai never
+does, so a LIVE agent refuses every dev build. An agent pins the key of its
+first install: one that installed a dev build updates to every later dev
+build, one that installed a release never takes a dev build. By hand, with the
+dev key:
 
 ```sh
-AXP_SIGNING_KEY=/secure/outside-repo/mintbot.ai-mintbot-desktop.key \
-  scripts/release.sh 0.1.0
+AXP_SIGNING_KEY=/path/to/mintbot.ai-mintbot-desktop-dev.key scripts/release-dev.sh [<commit>]
 ```
 
-Requires the AXP CLI with spec 0.5 support (`AXP_CLI` can select that build).
-The script stamps package versions, builds a deterministic timestamp-free
+**DEV tests the dev builds.** Beaver's "AXP package tests" (CatOffice on DEV)
+install the second-newest dev build and upgrade it to the newest, through the
+real panel mount, WebSocket/RFB framebuffer and noVNC canvas.
+
+**A release promotes a tested dev build.** A release on the package's own
+channel (`beta`, what LIVE agents install) names the dev build it promotes:
+
+```sh
+AXP_PROMOTE_FROM=0.1.10-dev.20261027120000 \
+AXP_SIGNING_KEY=/secure/outside-repo/mintbot.ai-mintbot-desktop.key \
+  scripts/release.sh 0.1.10
+```
+
+`scripts/release.sh` refuses without `AXP_PROMOTE_FROM` (a dev build of the
+version being cut), refuses a checkout with uncommitted changes, and first
+runs the mintbot repository's `developer_tools/axp_promote_check.py`
+(`MINTBOT_REPO`, default `../mintbot`): the dev build must exist, the
+checkout must be its commit and a green Beaver package journey must have run
+on it. Then it stamps package versions, builds a deterministic timestamp-free
 archive, fills hashes/freshness with `axp release`, signs using the external
 key, validates and verifies against the scoped public key directory. It does
-**not** commit, tag, push, publish, install, or enable anything. Private signing
-keys are excluded from Git and the explicit runtime archive allowlist.
-`dist/mintbot-desktop-0.1.0.tar.gz` excludes the signed manifest to avoid a digest
-cycle. A future release must attach both that artifact and
-`agent-extension.json`, and publish the authorized desktop public key at the
-publisher's well-known key-directory endpoint before user installation.
+**not** commit, tag, push, publish, install or enable anything; the `git` and
+`gh release create` steps it prints do, attaching both the artifact and
+`agent-extension.json`. A release is never a GitHub pre-release: it becomes
+the repository's "latest", which a bare repository URL installs. Requires the
+AXP CLI with spec 0.5 support (`AXP_CLI` can select that build). Private
+signing keys are excluded from Git and the explicit runtime archive allowlist;
+`dist/mintbot-desktop-<version>.tar.gz` excludes the signed manifest to avoid
+a digest cycle.

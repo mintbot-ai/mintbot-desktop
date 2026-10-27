@@ -1,0 +1,40 @@
+{
+  "publisher": "mintbot.ai",
+  "keys": [
+    {
+      "public_key": "ed25519:m5vaq2/BLL372gVnVljTkdS+TeYjkpyduQ7/zk/gHbk=",
+      "key_id": "mintbot.ai-graph-memory-2026",
+      "extensions": [
+        "graph-memory"
+      ]
+    },
+    {
+      "public_key": "ed25519:MGWTLv6h0j5d3mUnWZc0MzwZkhJQcmYVkJUMSLCXFno=",
+      "key_id": "mintbot.ai-mintbot-mcp-2026",
+      "extensions": [
+        "mintbot-mcp"
+      ]
+    },
+    {
+      "public_key": "ed25519:a4Pd2bbPpUrrDK5oBueJ5lyRwcfmJ4xOMw+2K8xlXQc=",
+      "key_id": "mintbot.ai-mintbot-desktop-2026",
+      "extensions": [
+        "mintbot-desktop"
+      ]
+    },
+    {
+      "public_key": "ed25519:E/vII4lrMY6E51BfxN+RDQHBW4z4Z07N+b/CgA8hvJk=",
+      "key_id": "mintbot.ai-mintbot-mcp-dev-2026",
+      "extensions": [
+        "mintbot-mcp"
+      ]
+    },
+    {
+      "public_key": "ed25519:cE+XvCq+oG/OAU8m6vunTL9QvxSoDt7Ztr+PK3hdnw8=",
+      "key_id": "mintbot.ai-mintbot-desktop-dev-2026",
+      "extensions": [
+        "mintbot-desktop"
+      ]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 VERSION="${1:?usage: build-artifact.sh <version> [out-dir]}"
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { printf 'invalid version\n' >&2; exit 1; }
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-dev\.[0-9]{14})?$ ]] || { printf 'invalid version\n' >&2; exit 1; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${2:-${ROOT}/dist}"
 FILES=(
