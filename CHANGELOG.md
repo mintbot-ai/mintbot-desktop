@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.11 (2026-10-27)
 
 - `.github/workflows/dev-build.yml` reports every published dev build to DEV
   CatOffice (`POST /beaver/dev-build`, repository secret
