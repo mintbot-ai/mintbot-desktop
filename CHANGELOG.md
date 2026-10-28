@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.12 (2026-10-28)
 
 - The desktop icons no longer cover application windows. openbox lowers an
   anchor window to the bottom of the stack when it starts and keeps every
