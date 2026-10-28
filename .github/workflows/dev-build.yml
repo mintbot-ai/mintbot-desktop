@@ -1,15 +1,17 @@
-# Publish a dev build of main (scripts/release-dev.sh): on every push, and
-# right after a release so that a dev build stays the newest candidate of the
-# hosts tracking dev. Signed by the dev key (secret AXP_DEV_SIGNING_KEY), which
-# only mintbot.dev's key directory lists; the release key never leaves the
-# publisher's machine.
+# Publish a dev build of main (scripts/release-dev.sh) on every push. Signed
+# by the dev key (secret AXP_DEV_SIGNING_KEY), which only mintbot.dev's key
+# directory lists; the release key never leaves the publisher's machine.
+#
+# A release is cut from a commit that is pushed to main first, so the push
+# already publishes the dev build that keeps a dev build the newest candidate
+# of the hosts tracking dev. The release event used to start a second build
+# of that same commit; its DEV package run then retired the first build's run
+# mid-journey and left a half-tested package on the testbed (2026-10-28).
 name: dev build
 
 on:
   push:
     branches: [main]
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -21,9 +23,6 @@ concurrency:
 
 jobs:
   publish:
-    # The dev builds this job publishes itself are pre-releases (and a release
-    # created with the workflow token starts no workflow anyway).
-    if: github.event_name != 'release' || !github.event.release.prerelease
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -41,7 +40,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DEV_SIGNING_KEY: ${{ secrets.AXP_DEV_SIGNING_KEY }}
-          # A push builds its own commit; a release or a manual run builds main.
+          # A push builds its own commit; a manual run builds main.
           COMMIT: ${{ github.event_name == 'push' && github.sha || '' }}
         run: |
           key="${RUNNER_TEMP}/dev-signing.key"
