@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.13 (2026-10-28)
 
 - The health hook no longer reports a session that is still coming up as
   unhealthy. The host runs `health.sh` the moment it has restarted the
