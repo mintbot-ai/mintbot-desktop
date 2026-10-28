@@ -247,15 +247,24 @@ class Children:
     def __exit__(self, *exc):
         self._signal_all(signal.SIGTERM)
         for process in reversed(self.processes):
+            self._reap(process)
+        self.processes.clear()
+
+    def stop(self, process):
+        """Terminate one child of this instance and wait for it, as the exit does for all."""
+        self._signal(process, signal.SIGTERM)
+        self._reap(process)
+
+    def _reap(self, process):
+        """Wait for a signalled child; one that ignores SIGTERM is killed."""
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._signal(process, signal.SIGKILL)
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                self._signal(process, signal.SIGKILL)
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass
-        self.processes.clear()
+                pass
 
     def _signal_all(self, signum):
         for process in reversed(self.processes):

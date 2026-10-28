@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- The desktop icons no longer cover application windows. openbox lowers an
+  anchor window to the bottom of the stack when it starts and keeps every
+  window beneath that anchor; idesk lowers its icons only once, when it
+  creates them, so icons that existed before openbox started stayed above
+  every window for good. The icon layer now starts only once openbox has
+  published `_NET_SUPPORTING_WM_CHECK` on the root window and on the anchor
+  it names (the root's copy outlives a dead openbox), and is started over
+  whenever the supervised openbox comes back after a crash. The real-GUI
+  smoke test checks the stacking after the start and after a killed openbox.
+
 ## v0.1.11 (2026-10-27)
 
 - `.github/workflows/dev-build.yml` reports every published dev build to DEV

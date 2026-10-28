@@ -36,6 +36,44 @@ def browser_window(gui, timeout=15):
     raise AssertionError('no visible Chromium window')
 
 
+def stacking_top_first(gui):
+    """The root window's direct children, top first (xwininfo lists them so),
+    each as its own line followed by the ids of every window nested in it."""
+    out = subprocess.run(['xwininfo', '-root', '-tree'], env=gui, capture_output=True, text=True, check=True).stdout
+    rows = [(len(line) - len(line.lstrip()), line.strip()) for line in out.splitlines() if line.strip().startswith('0x')]
+    top = min(indent for indent, _ in rows)
+    stack = []
+    for indent, text in rows:
+        if indent == top:
+            stack.append([text])
+        else:
+            stack[-1].append(text.split()[0])
+    return stack
+
+
+def icons_below(gui, window):
+    """True when every desktop icon (idesk's unmanaged 64x64 window at 40,40)
+    sits beneath the frame openbox holds the client `window` in. A client
+    without a frame (no window manager at the moment) is not below anything."""
+    stack = stacking_top_first(gui)
+    client = hex(int(window))
+    frames = [i for i, entry in enumerate(stack) if client in entry[1:]]
+    icons = [i for i, entry in enumerate(stack) if '64x64+40+40' in entry[0]]
+    return bool(frames and icons) and all(i > frames[0] for i in icons)
+
+
+def openbox_pid(display):
+    """The openbox serving this display alone; other sessions on the host keep theirs."""
+    for pid in subprocess.run(['pgrep', '-x', 'openbox'], capture_output=True, text=True).stdout.split():
+        try:
+            environ = Path(f'/proc/{pid}/environ').read_bytes().split(b'\0')
+        except OSError:
+            continue
+        if f'DISPLAY=:{display}'.encode() in environ:
+            return int(pid)
+    return None
+
+
 def test_foreground_real_gui_and_agent_helper(tmp_path):
     assert Path('mintbot_desktop/__main__.py').exists(), 'foreground CLI missing'
     for binary in ['Xtigervnc', 'tigervncpasswd', 'xauth', 'xdpyinfo', 'openbox', 'chromium', 'xdotool', 'xprop']:
@@ -83,6 +121,20 @@ def test_foreground_real_gui_and_agent_helper(tmp_path):
             # Chromium publishes its own window icon and class; openbox shows them.
             props = subprocess.run(['xprop', '-id', window, 'WM_CLASS', '_NET_WM_ICON'], env=gui, capture_output=True, text=True, check=True).stdout
             assert '"Chromium"' in props and '_NET_WM_ICON(CARDINAL)' in props and 'Icon (' in props, props
+            if shutil.which('idesk'):
+                # The desktop icons lie beneath the windows: the icon layer
+                # started only once openbox had put its anchor at the bottom.
+                assert icons_below(gui, window), stacking_top_first(gui)
+                # A window manager that died comes back with a new anchor
+                # beneath the icons; the icon layer is started over after it.
+                manager = openbox_pid(display)
+                assert manager
+                os.kill(manager, 9)
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline and not (openbox_pid(display) not in (None, manager) and icons_below(gui, window)):
+                    time.sleep(.25)
+                assert openbox_pid(display) not in (None, manager) and process.poll() is None
+                assert icons_below(gui, window), stacking_top_first(gui)
             # The user closes the browser: it stays closed, the session goes on.
             pid = subprocess.run(['xdotool', 'getwindowpid', window], env=gui, capture_output=True, text=True, check=True).stdout.strip()
             os.kill(int(pid), 15)

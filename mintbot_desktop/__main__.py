@@ -62,8 +62,9 @@ class Supervised:
         self.restarts = []
 
     def check(self):
+        """Restart the child if it died; True when it was restarted just now."""
         if self.process.poll() is None:
-            return
+            return False
         now = time.monotonic()
         self.restarts = [moment for moment in self.restarts if now - moment < RESTART_WINDOW]
         if len(self.restarts) >= RESTART_LIMIT:
@@ -71,6 +72,69 @@ class Supervised:
         self.restarts.append(now)
         log(f'{self.name} exited with status {self.process.returncode}; restarting')
         self.process = self.children.start(self.argv, env=self.env)
+        return True
+
+    def restart(self):
+        """Start the child over on purpose: not a death, so it does not count towards the limit."""
+        self.children.stop(self.process)
+        self.process = self.children.start(self.argv, env=self.env)
+
+
+async def xprop(env, args, timeout=2.0):
+    """xprop's output, or nothing when it fails or hangs (a window that is gone, a server that does not answer)."""
+    check = await asyncio.create_subprocess_exec('xprop', *args, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        output, _ = await asyncio.wait_for(check.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        check.kill()
+        await check.wait()
+        return b''
+    return output
+
+
+async def window_manager_ready(env):
+    """True once the root window names an anchor window that bears the mark too.
+
+    openbox publishes _NET_SUPPORTING_WM_CHECK on the root window right
+    after lowering its anchor, then on the anchor itself. The root's copy
+    outlives a dead openbox (a root property is nobody's resource), so on
+    its own it would pass a restart at once; the anchor it names is gone
+    with its owner, and the next openbox marks its own anchor only once
+    that is in place.
+    """
+    output = await xprop(env, ['-root', '_NET_SUPPORTING_WM_CHECK'])
+    if b'window id' not in output:
+        return False
+    anchor = output.rpartition(b'# ')[2].split()
+    if not anchor:
+        return False
+    return b'window id' in await xprop(env, ['-id', anchor[0].decode(), '_NET_SUPPORTING_WM_CHECK'])
+
+
+async def wait_for_window_manager(manager, env, stop, ready=window_manager_ready, timeout=15.0):
+    """Block until openbox owns the screen, or the session is asked to stop.
+
+    The icon layer may only start afterwards. When openbox starts it puts an
+    anchor window at the very bottom of the stack and from then on keeps
+    every application window just below that anchor (openbox/screen.c,
+    screen_annex); idesk lowers its icons once, when it creates them. An
+    icon that already exists when openbox starts therefore ends up above the
+    anchor, and above every window the user opens, for good - the race the
+    two lost on real agents when they were started together.
+
+    A window manager that dies meanwhile is restarted (or given up on) here
+    as in the main loop; one that is up but silent is logged and waited for
+    no longer, since a desktop without icons in order beats none at all.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        manager.check()
+        if stop.is_set():
+            return
+        if await ready(env):
+            return
+        await asyncio.sleep(.1)
+    log('window manager readiness timed out; the desktop icons may cover windows')
 
 
 class Once:
@@ -120,14 +184,20 @@ async def serve(cfg):
             if stop.is_set():
                 return
             write_desktop(cfg)
-            supervised = [Supervised(children, 'window manager', ['openbox'], env)]
-            # The icon layer is optional (an older standalone install without
-            # the package); the openbox root menu opens the browser either way.
+            manager = Supervised(children, 'window manager', ['openbox'], env)
+            # The icon layer comes once the window manager is up, never
+            # before (wait_for_window_manager). It is optional (an older
+            # standalone install without the package); the openbox root menu
+            # opens the browser either way.
+            await wait_for_window_manager(manager, env, stop)
+            if stop.is_set():
+                return
+            icons = None
             if shutil.which('idesk'):
-                supervised.append(Supervised(children, 'desktop icons', ['idesk'], env))
+                icons = Supervised(children, 'desktop icons', ['idesk'], env)
             else:
                 log('idesk is not installed; the browser icon is missing, the openbox menu still opens it')
-            supervised.append(Once(children, 'browser', browser_command(cfg, env), env))
+            browser = Once(children, 'browser', browser_command(cfg, env), env)
             app = create_app(token=(cfg.state / 'token').read_text(), password=(cfg.state / 'vnc-secret').read_text(), rfb_port=cfg.vnc_port)
             runner = web.AppRunner(app, access_log=None)
             try:
@@ -136,8 +206,16 @@ async def serve(cfg):
                 while not stop.is_set():
                     if x.poll() is not None:
                         raise RuntimeError(f'X server exited with status {x.returncode}')
-                    for child in supervised:
-                        child.check()
+                    if manager.check():
+                        # A new openbox lowers a new anchor beneath the icons
+                        # that already exist: the icon layer starts over
+                        # once it is up, and is at the bottom again.
+                        await wait_for_window_manager(manager, env, stop)
+                        if icons and not stop.is_set():
+                            icons.restart()
+                    if icons:
+                        icons.check()
+                    browser.check()
                     try:
                         await asyncio.wait_for(stop.wait(), timeout=.25)
                     except asyncio.TimeoutError:

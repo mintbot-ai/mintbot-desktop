@@ -91,11 +91,16 @@ class FakeChildren:
 
     def __init__(self):
         self.started = []
+        self.stopped = []
 
     def start(self, argv, env=None):
         process = self.Process()
         self.started.append((argv, process))
         return process
+
+    def stop(self, process):
+        process.returncode = -15
+        self.stopped.append(process)
 
 
 def test_the_browser_is_started_once_and_never_restarted(capsys):
@@ -125,6 +130,74 @@ def test_the_window_manager_and_icons_stay_supervised():
     children.started[-1][1].returncode = 1
     with pytest.raises(RuntimeError, match='keeps exiting'):
         openbox.check()
+
+
+def test_a_deliberate_restart_is_not_a_death():
+    """The icon layer is started over whenever the window manager comes back;
+    those restarts are nobody's crash and leave the crash budget alone."""
+    from mintbot_desktop.__main__ import RESTART_LIMIT, Supervised
+    children = FakeChildren()
+    icons = Supervised(children, 'desktop icons', ['idesk'], {})
+    assert icons.check() is False
+    for _ in range(RESTART_LIMIT + 2):
+        icons.restart()
+    assert len(children.stopped) == RESTART_LIMIT + 2
+    assert len(children.started) == RESTART_LIMIT + 3 and icons.process is children.started[-1][1]
+    children.started[-1][1].returncode = 1
+    assert icons.check() is True
+    assert icons.process.poll() is None
+
+
+async def test_the_icon_layer_waits_for_the_window_manager(capsys):
+    """openbox puts its anchor window at the bottom of the stack when it
+    starts and keeps every application window beneath it; idesk lowers its
+    icons only when it creates them. Icons created first stay above every
+    window for good, so the icon layer waits for openbox to publish
+    _NET_SUPPORTING_WM_CHECK on the root window."""
+    import asyncio
+    from mintbot_desktop.__main__ import Supervised, wait_for_window_manager
+    children = FakeChildren()
+    manager = Supervised(children, 'window manager', ['openbox'], {})
+    stop = asyncio.Event()
+
+    async def up(env):
+        return True
+
+    async def silent(env):
+        return False
+    await wait_for_window_manager(manager, {}, stop, ready=up, timeout=5)
+    assert capsys.readouterr().err == ''
+    # Up but silent: logged, then the session goes on without the icons in order.
+    await wait_for_window_manager(manager, {}, stop, ready=silent, timeout=.3)
+    assert 'window manager readiness timed out' in capsys.readouterr().err
+    # A window manager that dies while waited for is restarted right there.
+    children.started[-1][1].returncode = 1
+    await wait_for_window_manager(manager, {}, stop, ready=up, timeout=5)
+    assert [argv for argv, _ in children.started] == [['openbox'], ['openbox']]
+    assert 'window manager exited with status 1; restarting' in capsys.readouterr().err
+    # Asked to stop, the wait ends at once.
+    stop.set()
+    await asyncio.wait_for(wait_for_window_manager(manager, {}, stop, ready=silent, timeout=5), timeout=1)
+
+
+async def test_window_manager_readiness_outlasts_a_dead_openbox_only_on_the_root(monkeypatch):
+    """The root window keeps a dead openbox's _NET_SUPPORTING_WM_CHECK; the
+    anchor it names is gone with its owner, and the next openbox marks its
+    own anchor only after lowering it. Readiness asks the anchor too."""
+    import mintbot_desktop.__main__ as main
+    answers, asked = {}, []
+
+    async def fake_xprop(env, args, timeout=2.0):
+        asked.append(args)
+        return answers.get(args[0] if args[0] == '-root' else args[1], b'_NET_SUPPORTING_WM_CHECK:  not found.\n')
+    monkeypatch.setattr(main, 'xprop', fake_xprop)
+    assert await main.window_manager_ready({}) is False
+    assert asked == [['-root', '_NET_SUPPORTING_WM_CHECK']]
+    answers['-root'] = b'_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x40011f\n'
+    assert await main.window_manager_ready({}) is False
+    assert asked[-1] == ['-id', '0x40011f', '_NET_SUPPORTING_WM_CHECK']
+    answers['0x40011f'] = b'_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x40011f\n'
+    assert await main.window_manager_ready({}) is True
 
 
 def test_desktop_icon_and_menu_open_the_browser(tmp_path):
