@@ -238,9 +238,12 @@ def test_the_dev_key_directory_lists_every_release_key_and_the_dev_keys():
 
 
 def test_the_workflow_publishes_main_with_the_dev_key_alone():
+    """A release is cut from a commit pushed to main first, so the push's dev
+    build is the one its DEV package run tests; a second build on the release
+    event retired that run mid-journey."""
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert "push:\n    branches: [main]" in text and "release:\n    types: [published]" in text
-    assert "!github.event.release.prerelease" in text, "its own dev builds start no further build"
+    assert "push:\n    branches: [main]" in text and "workflow_dispatch:" in text
+    assert "release:" not in text, "the release event starts no second build of the same commit"
     assert re.findall(r"secrets\.\w+", text) == ["secrets.AXP_DEV_SIGNING_KEY", "secrets.BEAVER_DEV_BUILD_TOKEN"], \
         "the release key is never a secret; the dev-build token opens one DEV route"
     assert re.search(r"agent-extension@[0-9a-f]{40}\"", text), "the axp CLI is pinned to a commit"

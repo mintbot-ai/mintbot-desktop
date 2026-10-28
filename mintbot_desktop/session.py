@@ -62,6 +62,52 @@ def browser_launcher(cfg):
             '--state', str(cfg.state), 'browser']
 
 
+def child_named(name, proc=Path('/proc')):
+    """The pid of a child of this process whose command name is `name`, or None.
+
+    /proc/<pid>/stat reads "pid (comm) state ppid ..."; the name is cut at its
+    closing parenthesis, as it may hold spaces and parentheses of its own.
+    """
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / 'stat').read_text()
+        except OSError:
+            continue
+        head, _, rest = stat.rpartition(')')
+        if head.partition('(')[2] == name and int(rest.split()[1]) == os.getpid():
+            return int(entry.name)
+    return None
+
+
+def open_browser(cfg, run=subprocess.run, execve=os.execvpe, orphan=child_named):
+    """(Re)open the session's Chromium: the desktop icon, the openbox menu and the agent run this.
+
+    idesk runs an icon's command in its own process: its fork() result is
+    compared before it is assigned (`pid = fork() != 0`), so the parent execs
+    the command while the child goes on drawing the icons. Run from the icon,
+    this is therefore the very idesk the supervisor watches, with the idesk
+    that draws the icons as its orphan child. Becoming Chromium here handed
+    the supervisor a browser as its icon layer: one that exits at once when a
+    browser already runs (the new window goes to that one), whereupon the
+    supervisor started another idesk, which refused to run beside the orphan,
+    and after three refusals the whole session was given up on. With an
+    orphan in tow, the browser starts detached instead, the orphan retires,
+    and this process becomes idesk again.
+    """
+    env = gui_environment(cfg)
+    command = browser_command(cfg, env)
+    icons = orphan('idesk')
+    if icons is None:
+        execve(command[0], command, env)
+        return
+    run(['setsid', '--fork', *command], env=env)
+    os.kill(icons, signal.SIGTERM)
+    os.waitpid(icons, 0)
+    execve('idesk', ['idesk'], env)
+
+
 IDESK_CONFIG = """table Config
   FontName: sans
   FontSize: 10
@@ -122,12 +168,17 @@ OPENBOX_MENU = """<?xml version="1.0" encoding="UTF-8"?>
 def write_desktop(cfg):
     """The desktop icon (idesk, read from HOME) and the openbox root menu (read
     from XDG_CONFIG_HOME): both open the browser the user closed. Rewritten
-    on every start, so a moved state directory or interpreter is followed."""
+    on every start, so a moved state directory or interpreter is followed.
+
+    idesk hands the icon's command to `sh -c`, from its own process (see
+    open_browser); `exec` makes that process the launcher itself rather than
+    a shell waiting for it, so the launcher can tell where it runs. openbox
+    spawns the menu's command straight from its words, no shell."""
     command = shlex.join(browser_launcher(cfg))
     icons = cfg.state / '.idesktop'
     icons.mkdir(mode=0o700, exist_ok=True)
     (cfg.state / '.ideskrc').write_text(IDESK_CONFIG)
-    (icons / 'browser.lnk').write_text(IDESK_ICON.format(command=command, icon=BROWSER_ICON))
+    (icons / 'browser.lnk').write_text(IDESK_ICON.format(command='exec ' + command, icon=BROWSER_ICON))
     menu = cfg.state / 'config' / 'openbox'
     menu.mkdir(parents=True, exist_ok=True)
     (menu / 'menu.xml').write_text(OPENBOX_MENU.format(command=command.replace('&', '&amp;').replace('<', '&lt;')))

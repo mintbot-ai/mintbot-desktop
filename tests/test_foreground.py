@@ -62,16 +62,21 @@ def icons_below(gui, window):
     return bool(frames and icons) and all(i > frames[0] for i in icons)
 
 
-def openbox_pid(display):
-    """The openbox serving this display alone; other sessions on the host keep theirs."""
-    for pid in subprocess.run(['pgrep', '-x', 'openbox'], capture_output=True, text=True).stdout.split():
+def pids_on_display(name, display):
+    """The processes called `name` serving this display alone; other sessions on the host keep theirs."""
+    found = []
+    for pid in subprocess.run(['pgrep', '-x', name], capture_output=True, text=True).stdout.split():
         try:
             environ = Path(f'/proc/{pid}/environ').read_bytes().split(b'\0')
         except OSError:
             continue
         if f'DISPLAY=:{display}'.encode() in environ:
-            return int(pid)
-    return None
+            found.append(int(pid))
+    return found
+
+
+def openbox_pid(display):
+    return next(iter(pids_on_display('openbox', display)), None)
 
 
 def test_foreground_real_gui_and_agent_helper(tmp_path):
@@ -135,6 +140,23 @@ def test_foreground_real_gui_and_agent_helper(tmp_path):
                     time.sleep(.25)
                 assert openbox_pid(display) not in (None, manager) and process.poll() is None
                 assert icons_below(gui, window), stacking_top_first(gui)
+                # A double-click on the browser icon while the browser runs:
+                # idesk runs the icon's command from its own process (its
+                # fork() result is compared before it is assigned), so the
+                # launcher is the supervised idesk itself. Chromium hands the
+                # start over to the running instance, which brings its window
+                # back; the session goes on and one idesk serves the display.
+                subprocess.run(['xdotool', 'windowminimize', '--sync', window], env=gui, check=True, timeout=10)
+                assert not subprocess.run(['xdotool', 'search', '--onlyvisible', '--class', 'chromium'], env=gui, capture_output=True, text=True).stdout.split()
+                subprocess.run(['xdotool', 'mousemove', '72', '72', 'click', '--repeat', '2', '--delay', '120', '1'], env=gui, check=True)
+                restored = browser_window(gui)
+                time.sleep(3)
+                assert process.poll() is None, 'the session died after a double-click on the browser icon'
+                assert len(pids_on_display('idesk', display)) == 1
+                assert icons_below(gui, restored), stacking_top_first(gui)
+                # The supervised idesk is still idesk: no icon layer died or was given up on.
+                log.seek(0)
+                assert 'desktop icons' not in log.read()
             # The user closes the browser: it stays closed, the session goes on.
             pid = subprocess.run(['xdotool', 'getwindowpid', window], env=gui, capture_output=True, text=True, check=True).stdout.strip()
             os.kill(int(pid), 15)

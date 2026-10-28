@@ -132,6 +132,22 @@ def test_the_window_manager_and_icons_stay_supervised():
         openbox.check()
 
 
+def test_an_icon_layer_that_keeps_dying_is_dropped_not_the_session(capsys):
+    """The icons are a convenience: the openbox menu opens the browser without
+    them. The icon layer's give-up ends the layer, not the X server, openbox
+    and the browser the user is working in."""
+    from mintbot_desktop.__main__ import RESTART_LIMIT, Supervised, check_icons
+    children = FakeChildren()
+    icons = Supervised(children, 'desktop icons', ['idesk'], {})
+    for _ in range(RESTART_LIMIT):
+        children.started[-1][1].returncode = 1
+        assert check_icons(icons) is icons
+    children.started[-1][1].returncode = 1
+    assert check_icons(icons) is None
+    assert len(children.started) == RESTART_LIMIT + 1
+    assert 'desktop icons keeps exiting (last status 1); giving up; the desktop goes on without icons' in capsys.readouterr().err
+
+
 def test_a_deliberate_restart_is_not_a_death():
     """The icon layer is started over whenever the window manager comes back;
     those restarts are nobody's crash and leave the crash budget alone."""
@@ -203,7 +219,10 @@ async def test_window_manager_readiness_outlasts_a_dead_openbox_only_on_the_root
 def test_desktop_icon_and_menu_open_the_browser(tmp_path):
     """idesk reads its icon from HOME, openbox its root menu from
     XDG_CONFIG_HOME: both are the state directory, both run the package's
-    own `browser` command with the interpreter and path spelled out."""
+    own `browser` command with the interpreter and path spelled out. idesk
+    hands its command to `sh -c` from its own process, so `exec` makes that
+    process the launcher itself (which must tell where it runs); openbox
+    spawns the menu's command from its words, without a shell."""
     import shlex
     from mintbot_desktop.session import BROWSER_ICON, Config, browser_launcher, write_desktop
     cfg = Config(state=tmp_path / 'state')
@@ -214,7 +233,7 @@ def test_desktop_icon_and_menu_open_the_browser(tmp_path):
     assert command[-1] == 'browser' and command[-3:-1] == ['--state', str(cfg.state)]
     assert command[:2] == ['env', f'PYTHONPATH={ROOT}'] and '-m' in command and 'mintbot_desktop' in command
     icon = (cfg.state / '.idesktop' / 'browser.lnk').read_text()
-    assert f'Command: {shlex.join(command)}' in icon
+    assert f'Command: exec {shlex.join(command)}\n' in icon
     assert f'Icon: {BROWSER_ICON}' in icon and BROWSER_ICON.endswith('chromium.png')
     assert 'table Config' in (cfg.state / '.ideskrc').read_text()
     menu = (cfg.state / 'config' / 'openbox' / 'menu.xml').read_text()

@@ -35,6 +35,9 @@ async def test_http_auth_and_relative_assets(tmp_path):
                 text = await r.text()
                 assert "'./novnc/core/rfb.js'" in text
                 assert "new URL('./rfb', window.location.href)" in text
+                # A restarted service is joined again by the view itself, no reload.
+                assert "status.textContent = 'Desktop disconnected. Reconnecting" in text
+                assert 'setTimeout(connect, RECONNECT_MS)' in text
                 assert r.headers['Access-Control-Allow-Origin'] == '*'
             async with client.get(url + '/desktop/novnc/core/rfb.js', headers=headers) as r:
                 assert r.status == 200

@@ -12,8 +12,8 @@ import sys
 import time
 
 from . import browse
-from .session import (Config, Children, browser_command, display_in_use, gui_environment, port_available,
-                      prepare, vnc_command, write_desktop)
+from .session import (Config, Children, browser_command, display_in_use, gui_environment, open_browser,
+                      port_available, prepare, vnc_command, write_desktop)
 
 
 # A window manager or browser that dies this often is broken, not unlucky.
@@ -137,6 +137,22 @@ async def wait_for_window_manager(manager, env, stop, ready=window_manager_ready
     log('window manager readiness timed out; the desktop icons may cover windows')
 
 
+def check_icons(icons):
+    """The icon layer's turn in the loop: the layer, or None once it is given up on.
+
+    The icons are a convenience; the openbox root menu opens the browser
+    without them. A layer that keeps dying is dropped, not the session: the
+    X server, the window manager and the browser the user is working in
+    stay up.
+    """
+    try:
+        icons.check()
+    except RuntimeError as error:
+        log(f'{error}; the desktop goes on without icons, the openbox menu still opens the browser')
+        return None
+    return icons
+
+
 class Once:
     """A child started with the session and left alone afterwards.
 
@@ -214,7 +230,7 @@ async def serve(cfg):
                         if icons and not stop.is_set():
                             icons.restart()
                     if icons:
-                        icons.check()
+                        icons = check_icons(icons)
                     browser.check()
                     try:
                         await asyncio.wait_for(stop.wait(), timeout=.25)
@@ -246,11 +262,7 @@ def main():
     elif args.command == 'browse':
         browse.main(cfg, args.args[1:] if args.args[:1] == ['--'] else args.args)
     elif args.command == 'browser':
-        # (Re)open the session's Chromium: the desktop icon, the openbox menu
-        # and the agent run this after the user closed it.
-        env = gui_environment(cfg)
-        command = browser_command(cfg, env)
-        os.execvpe(command[0], command, env)
+        open_browser(cfg)
     else:
         command = args.args[1:] if args.args[:1] == ['--'] else args.args
         if not command:

@@ -206,3 +206,51 @@ def test_dead_x_server_leftovers_do_not_block_a_restart(tmp_path):
     for owner in (f'{os.getpid():>10}\n', 'not-a-pid\n', '0\n'):
         (tmp_path / '.X13-lock').write_text(owner)
         assert s.display_in_use(13, tmp_path) is True
+
+
+def test_child_named_finds_only_our_own_child():
+    s = session_module()
+    child = subprocess.Popen(['sleep', '60'])
+    try:
+        assert s.child_named('sleep') == child.pid
+        assert s.child_named('no-such-program') is None
+    finally:
+        child.kill()
+        child.wait()
+    assert s.child_named('sleep') is None
+
+
+def test_open_browser_run_by_hand_becomes_chromium(tmp_path):
+    """From the terminal, the openbox menu or an idesk that forks the right way
+    round, the launcher simply becomes Chromium."""
+    s = session_module()
+    cfg = s.Config(state=tmp_path)
+    calls = []
+    s.open_browser(cfg, run=lambda argv, **kwargs: calls.append(('run', argv)),
+                   execve=lambda *args: calls.append(('execve', args)), orphan=lambda name: None)
+    assert [call[0] for call in calls] == ['execve']
+    file, argv, env = calls[0][1]
+    assert file == 'chromium' and argv == s.browser_command(cfg, env) and env['DISPLAY'] == ':13'
+
+
+def test_open_browser_run_as_the_supervised_idesk_becomes_idesk_again(tmp_path):
+    """idesk's `pid = fork() != 0` makes the supervised idesk exec the icon's
+    command and leaves the idesk drawing the icons as its orphan child. The
+    launcher then starts the browser detached, retires that orphan and execs
+    idesk: the supervisor keeps one live idesk instead of a browser that
+    exits at once, followed by three idesks refusing to start beside the
+    orphan and the whole session given up on."""
+    s = session_module()
+    cfg = s.Config(state=tmp_path)
+    orphan = os.posix_spawnp('sleep', ['sleep', '60'], os.environ)
+    calls = []
+    s.open_browser(cfg, run=lambda argv, **kwargs: calls.append(('run', argv, kwargs['env'])),
+                   execve=lambda *args: calls.append(('execve', args)),
+                   orphan=lambda name: orphan if name == 'idesk' else None)
+    assert [call[0] for call in calls] == ['run', 'execve']
+    assert calls[0][1] == ['setsid', '--fork', *s.browser_command(cfg, calls[0][2])]
+    assert calls[1][1][:2] == ('idesk', ['idesk'])
+    assert calls[1][1][2]['DISPLAY'] == ':13'
+    # The orphan was signalled and reaped before idesk took the process over.
+    with pytest.raises(ChildProcessError):
+        os.waitpid(orphan, os.WNOHANG)

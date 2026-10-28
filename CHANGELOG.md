@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- A double-click on the desktop's browser icon no longer takes the whole
+  session down. idesk runs an icon's command from its own process (its
+  fork() result is compared before it is assigned), so the launcher ran as
+  the very idesk the supervisor watches, with the idesk drawing the icons
+  left behind as an orphan. The launcher exited at once when a browser
+  already ran (the new window goes to that one), the supervisor started
+  another idesk, which refused to run beside the orphan, and after three
+  refusals the session was given up on: the X server, openbox and the
+  browser with it, and the panel showed "Desktop disconnected". The launcher
+  now tells when it runs that way: it starts the browser detached, retires
+  the orphan and becomes idesk again. The real-GUI smoke test double-clicks
+  the icon.
+- An icon layer that keeps dying is dropped on its own; the session, and
+  the openbox menu that opens the browser, go on without it.
+- The desktop view reconnects by itself after the service was restarted
+  (an update, a crash) instead of asking for a reload.
+
 ## v0.1.13 (2026-10-28)
 
 - The health hook no longer reports a session that is still coming up as

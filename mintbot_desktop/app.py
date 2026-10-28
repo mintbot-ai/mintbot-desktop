@@ -84,14 +84,24 @@ HTML = """<!doctype html><html><head><meta charset="utf-8"><title>Agent desktop<
 JS = """import RFB from './novnc/core/rfb.js';
 const url = new URL('./rfb', window.location.href);
 url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-const rfb = new RFB(document.getElementById('screen'), url.href);
-rfb.scaleViewport = true;
-rfb.resizeSession = true;
-rfb.addEventListener('connect', () => document.getElementById('status').hidden = true);
-rfb.addEventListener('disconnect', () => {
-  const status = document.getElementById('status');
-  status.hidden = false; status.textContent = 'Desktop disconnected. Reload to reconnect.';
-});
+const screen = document.getElementById('screen');
+const status = document.getElementById('status');
+// The host restarts the session's service after an update or a crash; the
+// view connects again by itself, every few seconds for as long as it takes,
+// instead of asking for a reload. noVNC takes its canvas away on disconnect.
+const RECONNECT_MS = 3000;
+function connect() {
+  const rfb = new RFB(screen, url.href);
+  rfb.scaleViewport = true;
+  rfb.resizeSession = true;
+  rfb.addEventListener('connect', () => { status.hidden = true; });
+  rfb.addEventListener('disconnect', () => {
+    status.hidden = false;
+    status.textContent = 'Desktop disconnected. Reconnecting…';
+    setTimeout(connect, RECONNECT_MS);
+  });
+}
+connect();
 """
 
 
