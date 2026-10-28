@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.14 (2026-10-28)
 
 - A double-click on the desktop's browser icon no longer takes the whole
   session down. idesk runs an icon's command from its own process (its
