@@ -8,10 +8,16 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 
 from .browse import PLAYWRIGHT_REQUIREMENT
 from .session import Config, prepare
+
+# How long the health hook waits for a session that is still coming up. The
+# host gives a health hook 60 seconds; a gateway that is silent for 25 is down.
+HEALTH_WAIT_S = 25.0
+HEALTH_RETRY_S = 0.5
 
 # Session: X server, window manager, desktop icons (idesk: the browser icon),
 # browser, gateway. Agent tooling: window and clipboard helpers (wmctrl,
@@ -209,29 +215,51 @@ class Lifecycle:
                 shutil.rmtree(self.state)
         # APT dependencies are shared system packages and deliberately remain.
 
-    def health(self):
+    def health(self, wait=None, sleep=time.sleep, clock=time.monotonic):
+        """Exit 0 once the session's gateway answers; the last failure's reason otherwise.
+
+        The host runs this hook the moment it has restarted the service
+        (right after an update, on a panel check), and the gateway listens
+        only once the X server and the window manager are up, a second or
+        two later. A session that is still coming up is not unhealthy, so
+        the probe is repeated for `wait` seconds (well inside the host's
+        own hook timeout) before the answer is no.
+        """
+        wait = HEALTH_WAIT_S if wait is None else wait
         settings = json.loads((self.state / 'session.json').read_text())
         token = (self.state / 'token').read_text()
         request = urllib.request.Request(f'http://127.0.0.1:{settings["web_port"]}/health', headers={'Authorization': 'Bearer ' + token})
         # Never send loopback health credentials via inherited AXP proxy.
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(request, timeout=5) as response:
-            if response.status != 200 or json.load(response).get('status') != 'ok':
-                raise RuntimeError('Desktop health failed')
+        deadline = clock() + wait
+        while True:
+            try:
+                with opener.open(request, timeout=5) as response:
+                    if response.status != 200 or json.load(response).get('status') != 'ok':
+                        raise RuntimeError(f'the desktop gateway answered {response.status} on port {settings["web_port"]}, not ok')
+                return
+            except (OSError, ValueError, RuntimeError) as error:
+                if clock() >= deadline:
+                    raise RuntimeError(f'the desktop gateway on port {settings["web_port"]} did not answer within {wait:g}s: {error}') from error
+            sleep(HEALTH_RETRY_S)
 
 
 def main(argv=None):
     hook = (sys.argv if argv is None else argv)[1]
+    # A failed health hook's reason is the panel's "detail" for the red dot,
+    # and the host reads that from stdout; the other hooks' failures are
+    # relayed as errors, from either stream.
+    report = sys.stdout if hook == 'health' else sys.stderr
     try:
         instance = Lifecycle(source=Path(__file__).resolve().parents[1])
         getattr(instance, 'install' if hook == 'upgrade' else hook)()
     except subprocess.CalledProcessError as error:
         # A bare traceback hides the failed command's own message; the host
         # shows the user only the end of this output.
-        print(f'mintbot-desktop: {failure_summary(error)}', file=sys.stderr)
+        print(f'mintbot-desktop: {failure_summary(error)}', file=report)
         sys.exit(1)
     except (OSError, ValueError, RuntimeError) as error:
-        print(f'mintbot-desktop: {error}', file=sys.stderr)
+        print(f'mintbot-desktop: {error}', file=report)
         sys.exit(1)
 
 

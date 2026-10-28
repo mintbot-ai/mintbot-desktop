@@ -298,6 +298,79 @@ def test_main_reports_a_failed_command_without_a_traceback(tmp_path, capsys, mon
     assert err.strip().splitlines() == ['mintbot-desktop: apt-get update exited 100:', 'E: mirror refused']
 
 
+class FakeGateway:
+    """The session's HTTP gateway as urllib sees it: refusing connections
+    for the first `refusals` probes (a session still coming up), then ok."""
+
+    def __init__(self, refusals, status=200, body='{"status": "ok"}'):
+        self.refusals, self.status, self.body = refusals, status, body
+        self.probes = []
+
+    def open(self, request, timeout):
+        self.probes.append(request.full_url)
+        if len(self.probes) <= self.refusals:
+            raise OSError('[Errno 111] Connection refused')
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        pass
+
+    def read(self):
+        return self.body.encode()
+
+
+def health_state(tmp_path):
+    state = tmp_path / 'state'
+    state.mkdir()
+    (state / 'session.json').write_text(json.dumps({'web_port': 6081, 'display': 13, 'vnc_port': 5913, 'cdp_port': 9223}))
+    (state / 'token').write_text('secret')
+    return state
+
+
+def test_health_waits_for_a_session_that_is_still_coming_up(tmp_path, monkeypatch):
+    """The host runs the health hook the instant it restarted the service
+    (right after an update); the gateway listens a second or two later."""
+    import urllib.request
+    import mintbot_desktop.lifecycle as module
+    health_state(tmp_path)
+    gateway = FakeGateway(refusals=3)
+    monkeypatch.setattr(urllib.request, 'build_opener', lambda *handlers: gateway)
+    hooks = lifecycle(tmp_path, FakeCommands())
+    now, slept = [0.0], []
+    hooks.health(wait=25, sleep=lambda s: (slept.append(s), now.__setitem__(0, now[0] + s)), clock=lambda: now[0])
+    assert gateway.probes == ['http://127.0.0.1:6081/health'] * 4
+    assert slept == [module.HEALTH_RETRY_S] * 3
+    # A gateway that stays silent past the deadline is down, with the reason.
+    gateway = FakeGateway(refusals=10 ** 6)
+    with pytest.raises(RuntimeError, match=r'port 6081 did not answer within 25s: \[Errno 111\] Connection refused'):
+        hooks.health(wait=25, sleep=lambda s: now.__setitem__(0, now[0] + s), clock=lambda: now[0])
+    assert 25 / module.HEALTH_RETRY_S <= len(gateway.probes) <= 25 / module.HEALTH_RETRY_S + 2
+    # One that answers something other than ok is down too, at once.
+    gateway = FakeGateway(refusals=0, status=503, body='{"status": "down"}')
+    with pytest.raises(RuntimeError, match='answered 503'):
+        hooks.health(wait=0, sleep=lambda s: None, clock=lambda: 0)
+
+
+def test_main_reports_a_failed_health_on_stdout(tmp_path, capsys, monkeypatch):
+    """The host shows the health hook's stdout as the red dot's detail."""
+    import urllib.request
+    import mintbot_desktop.lifecycle as module
+    state = health_state(tmp_path)
+    monkeypatch.setenv('AXP_STATE_DIR', str(state))
+    monkeypatch.setenv('AXP_PREFIX', str(tmp_path / 'prefix'))
+    monkeypatch.setenv('HERMES_HOME', str(tmp_path / 'hermes'))
+    monkeypatch.setattr(module, 'HEALTH_WAIT_S', 0)
+    monkeypatch.setattr(urllib.request, 'build_opener', lambda *handlers: FakeGateway(refusals=10))
+    with pytest.raises(SystemExit) as exit_info:
+        module.main(['lifecycle', 'health'])
+    assert exit_info.value.code == 1
+    out, err = capsys.readouterr()
+    assert out.startswith('mintbot-desktop: the desktop gateway on port 6081 did not answer within 0s') and err == ''
+
+
 @pytest.mark.parametrize('host', ['mintbot', 'mintbot/2026.10', 'other/1', ''])
 def test_disable_never_controls_a_host_service(tmp_path, host):
     commands = FakeCommands()

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- The health hook no longer reports a session that is still coming up as
+  unhealthy. The host runs `health.sh` the moment it has restarted the
+  service after an update, before the gateway listens; the hook now probes
+  the gateway for up to 25 seconds before giving up, and prints the reason
+  of a failure on stdout, where the host reads the panel's detail from.
+
 ## v0.1.12 (2026-10-28)
 
 - The desktop icons no longer cover application windows. openbox lowers an
