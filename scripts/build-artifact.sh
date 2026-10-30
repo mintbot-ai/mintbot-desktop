@@ -5,7 +5,7 @@ VERSION="${1:?usage: build-artifact.sh <version> [out-dir]}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${2:-${ROOT}/dist}"
 FILES=(
-  mintbot_desktop/__init__.py mintbot_desktop/__main__.py mintbot_desktop/app.py
+  mintbot_desktop/__init__.py mintbot_desktop/__main__.py mintbot_desktop/app.py mintbot_desktop/attach.py
   mintbot_desktop/browse.py mintbot_desktop/session.py mintbot_desktop/lifecycle.py
   pyproject.toml install.sh upgrade.sh health.sh enable.sh disable.sh uninstall.sh
   skills/mintbot-desktop/SKILL.md README.md LICENSE after-install.md

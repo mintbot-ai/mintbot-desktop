@@ -38,6 +38,8 @@ async def test_http_auth_and_relative_assets(tmp_path):
                 # A restarted service is joined again by the view itself, no reload.
                 assert "status.textContent = 'Desktop disconnected. Reconnecting" in text
                 assert 'setTimeout(connect, RECONNECT_MS)' in text
+                # The package's own desktop takes the size of the panel.
+                assert 'rfb.resizeSession = true;' in text and '__RESIZE_SESSION__' not in text
                 assert r.headers['Access-Control-Allow-Origin'] == '*'
             async with client.get(url + '/desktop/novnc/core/rfb.js', headers=headers) as r:
                 assert r.status == 200

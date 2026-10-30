@@ -8,8 +8,14 @@ description: Use when controlling the shared mintbot Desktop GUI or its browser.
 # mintbot Desktop
 
 The installed launcher is `@LAUNCHER@`; private state is `@STATE@`.
-The panel and the agent share one TigerVNC X session, normally `:13`: the
-user watches everything you do there live, and you see what they did.
+The panel and the agent share one X session: the user watches everything
+you do there live, and you see what they did. On a server that is the
+package's own desktop, normally `:13`. On the user's own Linux computer
+(`@LAUNCHER@ env` shows a display such as `:0`) it is **their real screen**:
+the windows there are theirs, the pointer and keyboard you drive are theirs,
+and your programs appear on their desktop. Do not close, move or type into
+windows you did not open, keep what you open small and tidy, and prefer
+`browse` and the programs' own interfaces, which disturb nothing on screen.
 Never operate the unrelated `:12` session or ports 5912/6080.
 
 Pick the cheapest channel that does the job, in this order:
@@ -26,10 +32,12 @@ Pick the cheapest channel that does the job, in this order:
 
 Chromium on this display is the same one the user sees in the panel. `browse`
 attaches to it over CDP (127.0.0.1:9223) with Playwright and detaches after
-every command; it never closes the browser. The browser starts with the
-desktop and is not restarted when the user closes it: `@LAUNCHER@ browser`
-opens it again (the desktop icon and the right-click menu do the same), and
-`browse` tells you when that is needed.
+every command; it never closes the browser. On the package's own desktop the
+browser starts with the desktop and is not restarted when the user closes
+it; on the user's own computer nothing pops up on their screen by itself.
+Either way `@LAUNCHER@ browser` opens it (the desktop icon and the
+right-click menu do the same on the package's own desktop), and `browse`
+tells you when that is needed.
 
 ```sh
 @LAUNCHER@ browse status                        # CDP reachable? driver installed?

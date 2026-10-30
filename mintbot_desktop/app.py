@@ -93,7 +93,9 @@ const RECONNECT_MS = 3000;
 function connect() {
   const rfb = new RFB(screen, url.href);
   rfb.scaleViewport = true;
-  rfb.resizeSession = true;
+  // The package's own desktop takes the size of the panel; a computer's own
+  // desktop keeps the size of its screen and is scaled to fit.
+  rfb.resizeSession = __RESIZE_SESSION__;
   rfb.addEventListener('connect', () => { status.hidden = true; });
   rfb.addEventListener('disconnect', () => {
     status.hidden = false;
@@ -105,9 +107,11 @@ connect();
 """
 
 
-def create_app(*, token, password, novnc=Path('/usr/share/novnc'), rfb_port=5913):
+def create_app(*, token, password, novnc=Path('/usr/share/novnc'), rfb_port=5913, resize_session=True):
+    """The gateway; `resize_session` is off when the session shows a computer's own desktop (attach.py)."""
     if not token or not password:
         raise ValueError('Credentials must not be empty')
+    script_text = JS.replace('__RESIZE_SESSION__', 'true' if resize_session else 'false')
 
     @web.middleware
     async def authenticate(request, handler):
@@ -133,7 +137,7 @@ def create_app(*, token, password, novnc=Path('/usr/share/novnc'), rfb_port=5913
         return web.Response(text=HTML, content_type='text/html')
 
     async def script(request):
-        return web.Response(text=JS, content_type='text/javascript')
+        return web.Response(text=script_text, content_type='text/javascript')
 
     async def health(request):
         return web.json_response({'status': 'ok'})

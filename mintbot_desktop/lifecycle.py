@@ -11,6 +11,7 @@ import sys
 import time
 import urllib.request
 
+from .attach import SCRAPERS
 from .browse import PLAYWRIGHT_REQUIREMENT
 from .session import Config, prepare
 
@@ -19,14 +20,26 @@ from .session import Config, prepare
 HEALTH_WAIT_S = 25.0
 HEALTH_RETRY_S = 0.5
 
-# Session: X server, window manager, desktop icons (idesk: the browser icon),
-# browser, gateway. Agent tooling: window and clipboard helpers (wmctrl,
-# xclip), screenshots (scrot, maim), the accessibility bus Hermes's
-# computer_use toolset speaks to (at-spi2-core), and a virtualenv for the
-# Playwright browser driver.
-PACKAGES = ['tigervnc-standalone-server', 'tigervnc-tools', 'openbox', 'idesk', 'novnc',
+# Session: X server (standalone: the package's own desktop; scraping: the
+# computer's own, attach.py), window manager, desktop icons (idesk: the
+# browser icon), browser, gateway. Agent tooling: window and clipboard
+# helpers (wmctrl, xclip), screenshots (scrot, maim), the accessibility bus
+# Hermes's computer_use toolset speaks to (at-spi2-core), and a virtualenv
+# for the Playwright browser driver.
+PACKAGES = ['tigervnc-standalone-server', 'tigervnc-scraping-server', 'tigervnc-tools', 'openbox', 'idesk', 'novnc',
             'xauth', 'x11-utils', 'xdotool', 'scrot', 'maim', 'wmctrl', 'xclip', 'at-spi2-core',
             'chromium', 'python3-aiohttp', 'python3-pycryptodome', 'python3-venv', 'python3-pip']
+
+# Where APT is not this package's to run (not root, or not Debian: a
+# customer's own Linux computer), the programs behind those packages must be
+# there already. What a session cannot do without, each with the Debian
+# package to name; one X server suffices: the standalone one for a desktop
+# of the package's own, the scraping one for the computer's own desktop.
+REQUIRED_PROGRAMS = {'tigervncpasswd': 'tigervnc-tools', 'xauth': 'xauth', 'xdpyinfo': 'x11-utils', 'xprop': 'x11-utils'}
+X_SERVERS = {'Xtigervnc': 'tigervnc-standalone-server', **{name: 'tigervnc-scraping-server' for name in SCRAPERS}}
+NOVNC = Path('/usr/share/novnc/core/rfb.js')
+OPTIONAL_PROGRAMS = {'openbox': 'openbox', 'idesk': 'idesk', 'chromium': 'chromium', 'xdotool': 'xdotool',
+                     'wmctrl': 'wmctrl', 'xclip': 'xclip', 'maim': 'maim'}
 OWNER = '<!-- Managed by mintbot.ai/mintbot-desktop -->'
 
 # A machine's own APT sources (provider mirrors, third-party repositories) are
@@ -46,13 +59,22 @@ Components: main
 '''
 
 
-def debian_codename(os_release=Path('/etc/os-release')):
-    """The running Debian release's codename (``trixie``); other distributions are refused."""
+def os_release_fields(os_release=Path('/etc/os-release')):
     fields = {}
     for line in os_release.read_text().splitlines():
         key, sep, value = line.partition('=')
         if sep:
             fields[key.strip()] = value.strip().strip('"')
+    return fields
+
+
+def is_debian(os_release=Path('/etc/os-release')):
+    return os_release_fields(os_release).get('ID') == 'debian'
+
+
+def debian_codename(os_release=Path('/etc/os-release')):
+    """The running Debian release's codename (``trixie``); other distributions are refused."""
+    fields = os_release_fields(os_release)
     if fields.get('ID') != 'debian' or not fields.get('VERSION_CODENAME'):
         raise RuntimeError('mintbot Desktop installs its dependencies from Debian mirrors only; this is not a Debian release')
     return fields['VERSION_CODENAME']
@@ -68,11 +90,15 @@ def failure_summary(error):
 
 class Lifecycle:
 
-    def __init__(self, *, source, env=None, run=subprocess.run, os_release=Path('/etc/os-release')):
+    def __init__(self, *, source, env=None, run=subprocess.run, os_release=Path('/etc/os-release'),
+                 euid=None, which=shutil.which, present=None):
         self.source = Path(source)
         self.env = dict(os.environ if env is None else env)
         self.run = run
         self.os_release = Path(os_release)
+        self.euid = os.geteuid() if euid is None else euid
+        self.which = which
+        self.present = (lambda path: Path(path).is_file()) if present is None else present
         self.prefix = Path(self.env.get('AXP_PREFIX', '/opt/mintbot-desktop'))
         self.state = Path(self.env.get('AXP_STATE_DIR', '/var/lib/axp/mintbot.ai/mintbot-desktop'))
         self.cache = Path(self.env.get('AXP_CACHE_DIR', '/var/cache/mintbot-desktop')).resolve()
@@ -139,16 +165,45 @@ class Lifecycle:
         except (OSError, ValueError) as error:
             raise ValueError('Unsafe or missing installation record; refusing cleanup/adoption') from error
 
-    def install(self):
-        if not self.env.get('AXP_HOST') and self.prefix.exists() and any(self.prefix.iterdir()):
-            self.validate_record()
-        if os.geteuid() != 0:
-            raise PermissionError('System GUI dependencies require root')
+    def install_packages(self):
+        """The Debian packages, through APT, on a Debian host where this runs as root."""
         probe = self.run(['dpkg-query', '-W', '-f=${db:Status-Status}\n', *PACKAGES], capture_output=True, text=True)
         if probe.returncode or probe.stdout.splitlines() != ['installed'] * len(PACKAGES):
             options = self.apt_options()
             self.checked(['apt-get', 'update', *options])
             self.checked(['apt-get', 'install', '-y', '--no-install-recommends', *options, *PACKAGES])
+
+    def check_programs(self):
+        """Without APT (not root, or not Debian), what the session needs must be there already.
+
+        A customer's own Linux computer runs the agent unprivileged, and
+        Ubuntu's packages are not Debian's (its Chromium is a snap): the
+        hook installs nothing there and says what is missing instead, by
+        Debian package name. Missing optional programs cost a feature each,
+        not the install.
+        """
+        missing = {program: package for program, package in REQUIRED_PROGRAMS.items() if not self.which(program)}
+        if not any(self.which(name) for name in X_SERVERS):
+            missing['Xtigervnc or X0tigervnc'] = ' or '.join(dict.fromkeys(X_SERVERS.values()))
+        if not self.present(NOVNC):
+            missing['noVNC'] = 'novnc'
+        if self.run(['/usr/bin/python3', '-c', 'import aiohttp, Cryptodome'], capture_output=True, text=True).returncode:
+            missing['python3 aiohttp and pycryptodome'] = 'python3-aiohttp python3-pycryptodome'
+        if missing:
+            raise RuntimeError('APT is not run here (not root on Debian); install these first: '
+                               + ' '.join(dict.fromkeys(missing.values())) + ' (missing: ' + ', '.join(missing) + ')')
+        absent = [package for program, package in OPTIONAL_PROGRAMS.items() if not self.which(program)]
+        if absent:
+            print('mintbot-desktop: not installed, each costs a feature (the own desktop, its icon, the browser, '
+                  'window/clipboard/screenshot helpers): ' + ' '.join(absent), file=sys.stderr)
+
+    def install(self):
+        if not self.env.get('AXP_HOST') and self.prefix.exists() and any(self.prefix.iterdir()):
+            self.validate_record()
+        if self.euid == 0 and is_debian(self.os_release):
+            self.install_packages()
+        else:
+            self.check_programs()
         skill = self.hermes / 'skills' / 'mintbot-desktop' / 'SKILL.md'
         if skill.exists() and OWNER not in skill.read_text():
             raise RuntimeError('Refusing to overwrite an unrelated Hermes skill')

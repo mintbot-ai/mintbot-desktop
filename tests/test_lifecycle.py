@@ -34,13 +34,13 @@ class FakeCommands:
         return subprocess.CompletedProcess(args, 0, '', '')
 
 
-def lifecycle(tmp_path, run, os_release='ID=debian\nVERSION_CODENAME=trixie\n'):
+def lifecycle(tmp_path, run, os_release='ID=debian\nVERSION_CODENAME=trixie\n', **kwargs):
     assert importlib.util.find_spec('mintbot_desktop.lifecycle'), 'lifecycle missing'
     from mintbot_desktop.lifecycle import Lifecycle
     (tmp_path/'os-release').write_text(os_release)
     env = {'AXP_PREFIX':str(tmp_path/'prefix'), 'AXP_STATE_DIR':str(tmp_path/'state'), 'AXP_CACHE_DIR':str(tmp_path/'cache'),
            'HERMES_HOME':str(tmp_path/'hermes'), 'AXP_HOST':'mintbot'}
-    return Lifecycle(source=ROOT, env=env, run=run, os_release=tmp_path/'os-release')
+    return Lifecycle(source=ROOT, env=env, run=run, os_release=tmp_path/'os-release', euid=kwargs.pop('euid', 0), **kwargs)
 
 
 def test_install_idempotently_converges_without_starting_host_service(tmp_path):
@@ -284,12 +284,66 @@ def test_apt_uses_only_declared_debian_mirrors(tmp_path):
     assert not any((tmp_path/'cache'/'apt'/'sources.list.d').iterdir())
 
 
-def test_non_debian_host_is_refused_before_apt_runs(tmp_path):
+def test_install_declares_the_scraping_server_package(tmp_path):
+    """X0tigervnc shows a computer's own desktop; the install hook installs
+    it with the other GUI packages, so an upgrade of an older install adds it."""
+    from mintbot_desktop.lifecycle import PACKAGES
+    assert 'tigervnc-scraping-server' in PACKAGES
     commands = FakeCommands()
-    hooks = lifecycle(tmp_path, commands, os_release='ID=ubuntu\nVERSION_CODENAME=noble\n')
-    with pytest.raises(RuntimeError, match='Debian'):
+    lifecycle(tmp_path, commands).install()
+    assert 'tigervnc-scraping-server' in next(c for c in commands.calls if c[:2] == ['apt-get', 'install'])
+
+
+ALL_PROGRAMS = lambda name: '/usr/bin/' + name
+NOTHING = lambda path: False
+
+
+@pytest.mark.parametrize('host', ['ubuntu', 'unprivileged'])
+def test_without_apt_the_programs_already_there_are_used(tmp_path, capsys, host):
+    """A customer's own Linux computer: the agent is not root, and Ubuntu's
+    packages are not Debian's. The hook installs nothing there; what the
+    session needs must be there already, and then the install goes through."""
+    os_release = 'ID=ubuntu\nVERSION_CODENAME=noble\n' if host == 'ubuntu' else 'ID=debian\nVERSION_CODENAME=trixie\n'
+    euid = 0 if host == 'ubuntu' else 1000
+    commands = FakeCommands()
+    hooks = lifecycle(tmp_path, commands, os_release=os_release, euid=euid, which=ALL_PROGRAMS, present=lambda path: True)
+    hooks.install()
+    assert not any(c[0] in ('apt-get', 'dpkg-query') for c in commands.calls)
+    assert (tmp_path/'prefix'/'bin'/'mintbot-desktop').is_file()
+    assert (tmp_path/'hermes'/'skills'/'mintbot-desktop'/'SKILL.md').is_file()
+    assert capsys.readouterr().err == ''
+
+
+def test_without_apt_what_is_missing_is_named_by_package(tmp_path):
+    commands = FakeCommands()
+    hooks = lifecycle(tmp_path, commands, euid=1000, which=lambda name: None, present=NOTHING)
+    with pytest.raises(RuntimeError, match='not root on Debian') as error:
         hooks.install()
+    message = str(error.value)
+    for package in ['tigervnc-tools', 'xauth', 'x11-utils', 'tigervnc-standalone-server or tigervnc-scraping-server', 'novnc']:
+        assert package in message
+    assert not (tmp_path/'prefix').exists() and not (tmp_path/'hermes'/'skills').exists()
     assert not any(c[0] == 'apt-get' for c in commands.calls)
+    # One X server is enough: the scraping one alone shows a computer's own desktop.
+    scraper_only = lambda name: '/usr/bin/' + name if name in ('X0tigervnc', 'tigervncpasswd', 'xauth', 'xdpyinfo', 'xprop') else None
+    hooks = lifecycle(tmp_path, commands, euid=1000, which=scraper_only, present=lambda path: True)
+    hooks.install()
+    assert (tmp_path/'prefix'/'bin'/'mintbot-desktop').is_file()
+    # The Python modules the gateway imports are checked with the interpreter the launcher uses.
+    commands.fail = 'import aiohttp, Cryptodome'
+    with pytest.raises(RuntimeError, match='python3-aiohttp python3-pycryptodome'):
+        lifecycle(tmp_path, commands, euid=1000, which=ALL_PROGRAMS, present=lambda path: True).install()
+
+
+def test_without_apt_missing_optional_programs_cost_a_feature_not_the_install(tmp_path, capsys):
+    required_only = lambda name: '/usr/bin/' + name if name in ('Xtigervnc', 'tigervncpasswd', 'xauth', 'xdpyinfo', 'xprop') else None
+    hooks = lifecycle(tmp_path, FakeCommands(), euid=1000, which=required_only, present=lambda path: True)
+    hooks.install()
+    assert (tmp_path/'prefix'/'bin'/'mintbot-desktop').is_file()
+    err = capsys.readouterr().err
+    assert err.startswith('mintbot-desktop: not installed, each costs a feature')
+    for package in ['openbox', 'idesk', 'chromium', 'xdotool', 'wmctrl', 'xclip', 'maim']:
+        assert package in err
 
 
 def test_failure_summary_keeps_the_failed_commands_own_message():

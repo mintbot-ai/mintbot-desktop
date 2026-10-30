@@ -7,13 +7,14 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
 
-from . import browse
+from . import attach, browse
 from .session import (Config, Children, browser_command, display_in_use, gui_environment, open_browser,
-                      port_available, prepare, vnc_command, write_desktop)
+                      port_available, prepare, record_attachment, vnc_command, write_desktop)
 
 
 # A window manager or browser that dies this often is broken, not unlucky.
@@ -173,7 +174,94 @@ class Once:
         log(f'{self.name} exited with status {self.process.returncode}; not restarted')
 
 
-async def serve(cfg):
+async def wait_for_listener(process, port, stop, timeout=10.0):
+    """Block until the VNC server listens on the port, exits, or the session is asked to stop."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f'the desktop scraper exited with status {process.returncode} before listening')
+        if stop.is_set():
+            return
+        try:
+            with socket.create_connection(('127.0.0.1', port), timeout=.5):
+                return
+        except OSError:
+            pass
+        await asyncio.sleep(.1)
+    raise RuntimeError('the desktop scraper did not start listening in time')
+
+
+class VirtualDesktop:
+    """The package's own desktop: X server, window manager, icon layer and browser."""
+
+    def __init__(self, x, manager, icons, browser, env, stop):
+        self.x, self.manager, self.icons, self.browser, self.env, self.stop = x, manager, icons, browser, env, stop
+
+    @classmethod
+    async def start(cls, cfg, children, env, stop):
+        """The desktop, up; None when the session was asked to stop meanwhile."""
+        x = children.start(vnc_command(cfg), env=env)
+        await wait_for_display(x, env, stop, cfg.display)
+        if stop.is_set():
+            return None
+        write_desktop(cfg)
+        manager = Supervised(children, 'window manager', ['openbox'], env)
+        # The icon layer comes once the window manager is up, never
+        # before (wait_for_window_manager). It is optional (an older
+        # standalone install without the package); the openbox root menu
+        # opens the browser either way.
+        await wait_for_window_manager(manager, env, stop)
+        if stop.is_set():
+            return None
+        icons = None
+        if shutil.which('idesk'):
+            icons = Supervised(children, 'desktop icons', ['idesk'], env)
+        else:
+            log('idesk is not installed; the browser icon is missing, the openbox menu still opens it')
+        browser = Once(children, 'browser', browser_command(cfg, env), env)
+        return cls(x, manager, icons, browser, env, stop)
+
+    async def check(self):
+        if self.x.poll() is not None:
+            raise RuntimeError(f'X server exited with status {self.x.returncode}')
+        if self.manager.check():
+            # A new openbox lowers a new anchor beneath the icons
+            # that already exist: the icon layer starts over
+            # once it is up, and is at the bottom again.
+            await wait_for_window_manager(self.manager, self.env, self.stop)
+            if self.icons and not self.stop.is_set():
+                self.icons.restart()
+        if self.icons:
+            self.icons = check_icons(self.icons)
+        self.browser.check()
+
+
+class ExistingDesktop:
+    """The computer's own desktop (attach.py), served over RFB by x0vncserver.
+
+    Nothing else is started on it: the owner's window manager runs it, and a
+    browser that popped up on their screen by itself would be in their way.
+    `mintbot-desktop browser` opens the agent's browser there when needed.
+    """
+
+    def __init__(self, scraper):
+        self.scraper = scraper
+
+    @classmethod
+    async def start(cls, cfg, children, env, stop, attachment):
+        log(f'showing the existing desktop on {attachment.display}')
+        scraper = Supervised(children, 'desktop scraper', attach.scrape_command(cfg, attachment, attach.scraper()), env)
+        await wait_for_listener(scraper.process, cfg.vnc_port, stop)
+        return None if stop.is_set() else cls(scraper)
+
+    async def check(self):
+        # A scraper that keeps exiting has lost its display (the owner
+        # logged out): the session ends, and the host's restart looks for
+        # a desktop to show again.
+        self.scraper.check()
+
+
+async def serve(cfg, mode='auto', display=None):
     from aiohttp import web
     from .app import create_app
 
@@ -184,9 +272,14 @@ async def serve(cfg):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RuntimeError('Another desktop session already uses this state directory') from None
-        if display_in_use(cfg.display):
-            raise RuntimeError(f'Display :{cfg.display} already exists; will not take over another session')
-        for name, port in (('web', cfg.web_port), ('VNC', cfg.vnc_port), ('CDP', cfg.cdp_port)):
+        attachment = attach.choose(cfg, mode, display, log=log)
+        record_attachment(cfg, attachment)
+        ports = [('web', cfg.web_port), ('VNC', cfg.vnc_port)]
+        if attachment is None:
+            if display_in_use(cfg.display):
+                raise RuntimeError(f'Display :{cfg.display} already exists; will not take over another session')
+            ports.append(('CDP', cfg.cdp_port))
+        for name, port in ports:
             if not port_available(port):
                 raise RuntimeError(f'{name} port {port} is already in use')
         env = gui_environment(cfg)
@@ -195,43 +288,20 @@ async def serve(cfg):
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
         with Children() as children:
-            x = children.start(vnc_command(cfg), env=env)
-            await wait_for_display(x, env, stop, cfg.display)
-            if stop.is_set():
-                return
-            write_desktop(cfg)
-            manager = Supervised(children, 'window manager', ['openbox'], env)
-            # The icon layer comes once the window manager is up, never
-            # before (wait_for_window_manager). It is optional (an older
-            # standalone install without the package); the openbox root menu
-            # opens the browser either way.
-            await wait_for_window_manager(manager, env, stop)
-            if stop.is_set():
-                return
-            icons = None
-            if shutil.which('idesk'):
-                icons = Supervised(children, 'desktop icons', ['idesk'], env)
+            if attachment is None:
+                desktop = await VirtualDesktop.start(cfg, children, env, stop)
             else:
-                log('idesk is not installed; the browser icon is missing, the openbox menu still opens it')
-            browser = Once(children, 'browser', browser_command(cfg, env), env)
-            app = create_app(token=(cfg.state / 'token').read_text(), password=(cfg.state / 'vnc-secret').read_text(), rfb_port=cfg.vnc_port)
+                desktop = await ExistingDesktop.start(cfg, children, env, stop, attachment)
+            if desktop is None:
+                return
+            app = create_app(token=(cfg.state / 'token').read_text(), password=(cfg.state / 'vnc-secret').read_text(),
+                             rfb_port=cfg.vnc_port, resize_session=attachment is None)
             runner = web.AppRunner(app, access_log=None)
             try:
                 await runner.setup()
                 await web.TCPSite(runner, '127.0.0.1', cfg.web_port).start()
                 while not stop.is_set():
-                    if x.poll() is not None:
-                        raise RuntimeError(f'X server exited with status {x.returncode}')
-                    if manager.check():
-                        # A new openbox lowers a new anchor beneath the icons
-                        # that already exist: the icon layer starts over
-                        # once it is up, and is at the bottom again.
-                        await wait_for_window_manager(manager, env, stop)
-                        if icons and not stop.is_set():
-                            icons.restart()
-                    if icons:
-                        icons = check_icons(icons)
-                    browser.check()
+                    await desktop.check()
                     try:
                         await asyncio.wait_for(stop.wait(), timeout=.25)
                     except asyncio.TimeoutError:
@@ -245,6 +315,11 @@ def main():
     parser.add_argument('--state', type=Path, default=Path(os.environ.get('AXP_STATE_DIR', '/var/lib/axp/mintbot.ai/mintbot-desktop')))
     for name in ('display', 'web-port', 'vnc-port', 'cdp-port'):
         parser.add_argument('--'+name, type=int)
+    # Which desktop `serve` shows (attach.py): the computer's own when there
+    # is one (auto), that one only (attach), or the package's own (virtual).
+    # `--attach` names the existing display outright instead of looking.
+    parser.add_argument('--mode', choices=attach.MODES, default=os.environ.get('MINTBOT_DESKTOP_MODE') or 'auto')
+    parser.add_argument('--attach', metavar='DISPLAY', default=os.environ.get('MINTBOT_DESKTOP_ATTACH') or None)
     parser.add_argument('command', choices=('serve', 'prepare', 'env', 'exec', 'browse', 'browser'))
     parser.add_argument('args', nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -255,10 +330,11 @@ def main():
     if args.command == 'prepare':
         prepare(cfg)
     elif args.command == 'serve':
-        asyncio.run(serve(cfg))
+        asyncio.run(serve(cfg, 'attach' if args.attach else args.mode, args.attach))
     elif args.command == 'env':
         env = gui_environment(cfg)
-        print(json.dumps({key: env[key] for key in ('DISPLAY', 'XAUTHORITY', 'HOME')}))
+        # XAUTHORITY is null on an existing display that asks for no authority file.
+        print(json.dumps({key: env.get(key) for key in ('DISPLAY', 'XAUTHORITY', 'HOME')}))
     elif args.command == 'browse':
         browse.main(cfg, args.args[1:] if args.args[:1] == ['--'] else args.args)
     elif args.command == 'browser':

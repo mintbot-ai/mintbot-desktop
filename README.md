@@ -30,6 +30,53 @@ uses:
 | Chromium CDP | `127.0.0.1:9223`, trusted local clients only |
 | Credentials / isolated browser profile | `AXP_STATE_DIR`, directory 0700 |
 
+### A computer's own desktop
+
+On a server the session is the package's own desktop above. On a Linux
+computer whose owner is logged in at the screen (mintbot on the customer's
+own computer), the desktop to show is theirs: `serve` looks for the user's
+X11 session when it starts and, finding one, shows **that** screen in the
+panel instead of starting a desktop of its own. The owner and the agent then
+see and control the very same screen. The look-up (`mintbot_desktop/attach.py`)
+reads this process's environment, the user's systemd manager environment
+(desktops import `DISPLAY` and `XAUTHORITY` into it at login) and logind's
+x11 sessions of this user, and takes a display only once `xdpyinfo` opens
+it with one of the authority files (the environment's, GDM's, `~/.Xauthority`,
+none). TigerVNC's x0vncserver (`X0tigervnc` on Debian and Ubuntu, APT package
+`tigervnc-scraping-server`) then serves that display over RFB on the same
+loopback VNC port with the same password file, so the gateway and the panel
+view are unchanged; the view keeps the screen's own size (no `resizeSession`)
+and scales it to fit. Nothing else is started on the owner's screen: their
+window manager runs it, and no browser pops up by itself. `mintbot-desktop
+browser` opens the agent's Chromium there (own profile, CDP) when the agent
+needs it, and `browse` says so when CDP does not answer.
+
+| | package's own desktop | computer's own desktop |
+|---|---|---|
+| chosen when | no X11 session of this user (a server), or `--mode virtual` | an X11 session answers (`--mode auto`, the default), or `--attach :0` |
+| X server | Xtigervnc on `:13` | the owner's, served by X0tigervnc |
+| started by the session | openbox, idesk, Chromium | nothing |
+| `env` / `exec` | `DISPLAY=:13`, the session's Xauthority | the owner's display and authority file (`state/attached.json`) |
+| view | takes the panel's size | keeps the screen's size, scaled to fit |
+
+The mode is settled when the session starts (`--mode auto|attach|virtual`,
+or `MINTBOT_DESKTOP_MODE`; `--attach DISPLAY` / `MINTBOT_DESKTOP_ATTACH`
+names the display outright and insists on it). A desktop that appears later
+is picked up by the next start; one that goes away (the owner logs out)
+makes X0tigervnc exit, the session gives up after the restart budget, and
+the host's `on-failure` restart looks for a desktop again, finding none and
+starting the virtual one. A Wayland session is not attached to: its `DISPLAY`
+is XWayland, whose root window shows nothing, so the virtual desktop is
+started and the log says why. `HOME` and the XDG directories stay the
+session's own in both modes, so the agent's programs keep their settings out
+of the owner's.
+
+Showing the owner's own screen in the panel is a bigger thing than a
+desktop on a server: whoever can open the panel view sees and operates the
+computer. That is the owner's decision when they install the extension on
+their own computer; the panel's session, two-factor and capability checks
+guard the view as before.
+
 The package refuses the known unrelated display `:12` and ports 5912/6080.
 It also refuses occupied displays/ports and does not kill existing sessions.
 A stale lock left by a crashed X server is not occupancy: Xvnc replaces it.
@@ -86,7 +133,15 @@ private deb822 source list for the running Debian release under
 `AXP_CACHE_DIR/apt/` and points both `apt-get update` and `apt-get install` at
 it, with a private index directory so the host's own index files are never
 pruned. The machine's source lists are not modified; downloads share the
-system archive cache. Non-Debian hosts are refused before APT runs. Distro
+system archive cache. APT runs only as root on Debian. Elsewhere (the agent
+unprivileged on a customer's own computer; Ubuntu, whose packages are not
+Debian's and whose Chromium is a snap) the hook installs nothing: what a
+session cannot do without must be there already (`tigervncpasswd`, `xauth`,
+`xdpyinfo`, `xprop`, noVNC, python3 `aiohttp` and `pycryptodome`, and one X
+server: `Xtigervnc` for a desktop of the package's own or `X0tigervnc` for the
+computer's own), and the hook names what is missing by Debian package. Missing
+optional programs (openbox, idesk, chromium, xdotool, wmctrl, xclip, maim)
+cost a feature each and are listed on stderr, not refused. Distro
 noVNC and Python dependencies receive distro updates; they are not vendored or
 byte-pinned in the source artifact.
 
@@ -261,6 +316,15 @@ Debian 13 agent with the new host/protocol code and consent, verify:
 6. Disable stops the entire cgroup without deleting data; enable restores it.
    Upgrade preserves state; uninstall retains state, explicit purge deletes it.
    Unrelated `:12` / 5912 / 6080 remain unchanged throughout.
+7. On a customer's Linux computer (the agent unprivileged, the owner logged
+   in at an X11 desktop): the panel shows the owner's screen, input from the
+   panel moves their pointer, `exec` runs on their display, logging out ends
+   the session and the restart brings the virtual desktop, logging in again
+   plus a restart brings their screen back. A Wayland login gets the virtual
+   desktop with the reason in the log. The real-GUI smoke covers the
+   attach path with a stand-in X server (`tests/test_attach.py`); DEV's
+   Beaver testbed is a server with no desktop session and only proves the
+   virtual path.
 
 ## Releasing
 

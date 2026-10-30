@@ -246,10 +246,50 @@ def prepare(cfg):
         raise ValueError('State belongs to another display/port configuration; use a fresh state directory')
 
 
+# Which display the running session shows when it is not the package's own
+# (attach.py): `env`, `exec`, `browse` and `browser` run outside the session
+# and read it from here. The virtual desktop leaves no record.
+ATTACHMENT_FILE = 'attached.json'
+
+
+def record_attachment(cfg, attachment):
+    """Remember the existing display the session shows, or forget one (the virtual desktop)."""
+    path = cfg.state / ATTACHMENT_FILE
+    if attachment is None:
+        path.unlink(missing_ok=True)
+        return
+    staging = path.with_suffix('.tmp')
+    fd = os.open(staging, os.O_CREAT | os.O_TRUNC | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as handle:
+        json.dump({'display': attachment.display, 'xauthority': attachment.xauthority}, handle)
+        handle.write('\n')
+    os.replace(staging, path)
+
+
+def read_attachment(cfg):
+    """{'display', 'xauthority'} of the existing display the session shows, or None."""
+    try:
+        data = json.loads((cfg.state / ATTACHMENT_FILE).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get('display'), str) or not data['display']:
+        return None
+    return {'display': data['display'], 'xauthority': data.get('xauthority') or None}
+
+
 def gui_environment(cfg):
     env = dict(os.environ)
     env.update(DISPLAY=f':{cfg.display}', XAUTHORITY=str(cfg.state / 'Xauthority'), HOME=str(cfg.state),
                XDG_CONFIG_HOME=str(cfg.state / 'config'), XDG_CACHE_HOME=str(cfg.state / 'cache'))
+    attached = read_attachment(cfg)
+    if attached:
+        # The computer's own desktop: its display and its authority file.
+        # HOME and the XDG directories stay the session's own, so the
+        # agent's programs keep their settings out of the owner's.
+        env['DISPLAY'] = attached['display']
+        del env['XAUTHORITY']
+        if attached['xauthority']:
+            env['XAUTHORITY'] = attached['xauthority']
     return env
 
 

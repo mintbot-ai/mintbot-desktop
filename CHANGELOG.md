@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+- A computer's own desktop. On a Linux computer whose owner is logged in
+  at an X11 desktop (mintbot on the customer's own computer), `serve` shows
+  **that** screen in the panel instead of starting a desktop of its own:
+  the user's X11 session is found through the process environment, the
+  user's systemd manager environment and logind, proven with `xdpyinfo`,
+  and served over RFB by TigerVNC's X0tigervnc (new APT dependency
+  `tigervnc-scraping-server`) on the same loopback port with the same
+  password file; the gateway and the view are unchanged, the view keeps
+  the screen's size. Nothing is started on the owner's screen (no window
+  manager, icons or browser of the package's own); `mintbot-desktop
+  browser` opens the agent's Chromium there when needed. `env`, `exec`,
+  `browse` and `browser` follow the attached display (`state/attached.json`).
+  `--mode auto|attach|virtual` (`MINTBOT_DESKTOP_MODE`) and `--attach
+  DISPLAY` (`MINTBOT_DESKTOP_ATTACH`) select; a server with no session, a
+  Wayland login or a missing X0tigervnc gets the virtual desktop as before,
+  with the reason in the log. An owner who logs out ends the session (the
+  scraper keeps exiting); the host's restart looks again.
+- The install hook runs APT only as root on Debian. Unprivileged (the agent
+  on a customer's computer) or on another distribution (Ubuntu) it installs
+  nothing and checks that the programs a session cannot do without are
+  there (one X server suffices), naming what is missing by Debian package;
+  missing optional programs are listed, not refused.
+
 ## v0.1.14 (2026-10-28)
 
 - A double-click on the desktop's browser icon no longer takes the whole
