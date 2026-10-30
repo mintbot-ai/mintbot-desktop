@@ -1,18 +1,23 @@
-"""A desktop that already exists: the computer's own X11 session.
+"""A desktop that already exists: the computer's own session.
 
 On a server the package starts a desktop of its own (Xtigervnc on :13,
 openbox, a browser; see __main__.serve). On a Linux computer whose owner is
 logged in at the screen, the desktop to show is theirs: the panel then
-displays, and controls, the very screen the owner is looking at. TigerVNC's
-x0vncserver serves an existing X display over RFB with the same password
-file the virtual desktop uses, so the gateway and the panel view stay as
-they are. Debian and Ubuntu name that binary X0tigervnc; their x0vncserver
-is a daemonising wrapper around it, so the binary is preferred.
+displays, and controls, the very screen the owner is looking at. Two ways:
 
-A Wayland session has no X root window to read (its DISPLAY is XWayland,
-whose root window shows nothing); it is not attached to, and the virtual
-desktop is started instead. The decision is taken when the session starts:
-a desktop that appears or goes away later is picked up by the next start.
+- An X11 session is scraped. TigerVNC's x0vncserver serves an existing X
+  display over RFB with the same password file the virtual desktop uses, so
+  the gateway and the panel view stay as they are. Debian and Ubuntu name
+  that binary X0tigervnc; their x0vncserver is a daemonising wrapper around
+  it, so the binary is preferred.
+- A Wayland session has no X root window to read (its DISPLAY is XWayland,
+  whose root window shows nothing). Its own remote desktop server speaks
+  RDP (GNOME Remote Desktop, KDE's krdp; rdp.py): the gateway proxies that
+  for IronRDP's browser client and the view shows the owner's screen
+  through it.
+
+The decision is taken when the session starts: a desktop that appears or
+goes away later is picked up by the next start.
 """
 from dataclasses import dataclass
 import os
@@ -20,9 +25,15 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from . import rdp
+
 MODES = ('auto', 'attach', 'virtual')
 SCRAPERS = ('X0tigervnc', 'x0vncserver')
 PROBE_TIMEOUT = 3.0
+# What of a Wayland session's environment the agent's GUI programs and
+# grdctl need: where the compositor and its XWayland are, the session bus.
+SESSION_VARIABLES = ('WAYLAND_DISPLAY', 'DISPLAY', 'XAUTHORITY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS',
+                     'XDG_CURRENT_DESKTOP', 'XDG_SESSION_TYPE')
 
 
 @dataclass(frozen=True)
@@ -30,6 +41,13 @@ class Attachment:
     """An existing X display and the authority file that opens it (None: the server asks for none)."""
     display: str
     xauthority: str | None = None
+
+
+@dataclass(frozen=True)
+class Shared:
+    """An existing desktop shown by its own RDP server, and the session environment the agent's programs run in."""
+    target: rdp.Target
+    environment: dict
 
 
 def scraper(which=shutil.which):
@@ -97,6 +115,10 @@ def logind_sessions(run=subprocess.run, uid=None):
     return sessions
 
 
+def _is_wayland(env):
+    return bool(env.get('WAYLAND_DISPLAY')) or env.get('XDG_SESSION_TYPE') == 'wayland'
+
+
 def find_display(*, display=None, exclude=(), run=subprocess.run, environ=None, uid=None, home=None, probe=None):
     """The X11 display of the desktop this user is logged in at: (Attachment, None), or (None, why not).
 
@@ -119,7 +141,7 @@ def find_display(*, display=None, exclude=(), run=subprocess.run, environ=None, 
         candidates.append((display, environ.get('XAUTHORITY')))
     else:
         for env in (environ, user_manager_environment(run)):
-            if env.get('WAYLAND_DISPLAY') or env.get('XDG_SESSION_TYPE') == 'wayland':
+            if _is_wayland(env):
                 wayland = True
             elif env.get('DISPLAY'):
                 candidates.append((env['DISPLAY'], env.get('XAUTHORITY')))
@@ -147,27 +169,62 @@ def find_display(*, display=None, exclude=(), run=subprocess.run, environ=None, 
     return None, 'this user is logged in at no X11 desktop'
 
 
-def choose(cfg, mode='auto', display=None, *, find=find_display, which=shutil.which, log=lambda message: None):
-    """The desktop the session shows: an Attachment to an existing one, or None for the virtual desktop.
+def find_wayland(*, run=subprocess.run, environ=None, uid=None):
+    """The environment of the Wayland session this user is logged in at, or None when there is none.
 
-    `auto` takes an existing desktop when there is one to show and falls
-    back to the virtual desktop, saying why; `attach` insists on one;
-    `virtual` never looks.
+    The process's own environment and the user's systemd manager
+    environment name the compositor (WAYLAND_DISPLAY), its XWayland
+    (DISPLAY) and the session bus. A Wayland session logind alone knows of
+    has no environment to hand on: an empty one is returned, since grdctl
+    and the GUI programs may still find their way over the user runtime
+    directory.
+    """
+    environ = dict(os.environ if environ is None else environ)
+    for env in (environ, user_manager_environment(run)):
+        if _is_wayland(env):
+            return {name: env[name] for name in SESSION_VARIABLES if env.get(name)}
+    if any(kind == 'wayland' for kind, _ in logind_sessions(run, uid)):
+        return {}
+    return None
+
+
+def choose(cfg, mode='auto', display=None, rdp_address=None, *, find=find_display, wayland=find_wayland, gnome=rdp.Gnome,
+           which=shutil.which, log=lambda message: None):
+    """The desktop the session shows: an Attachment or a Shared existing one, or None for the virtual desktop.
+
+    `auto` takes an existing desktop when there is one to show (an X11
+    session first, then a Wayland session's RDP server) and falls back to
+    the virtual desktop, saying why; `attach` insists on an existing one;
+    `virtual` never looks. `display` names the X display outright,
+    `rdp_address` the RDP server (rdp.given); either insists.
     """
     if mode not in MODES:
         raise ValueError(f'Unknown desktop mode {mode!r}; one of {", ".join(MODES)}')
     if mode == 'virtual':
         return None
+    if rdp_address:
+        return Shared(rdp.given(rdp_address), wayland() or {})
+    reasons = []
     if scraper(which) is None:
-        reason = 'x0vncserver is not installed (Debian: tigervnc-scraping-server)'
-        if mode == 'attach':
-            raise RuntimeError(f'Cannot show an existing desktop: {reason}')
-        log(f'{reason}; starting the virtual desktop')
-        return None
-    attachment, reason = find(display=display, exclude={f':{cfg.display}'})
-    if attachment is not None:
-        return attachment
+        reasons.append('x0vncserver is not installed (Debian: tigervnc-scraping-server)')
+    else:
+        attachment, reason = find(display=display, exclude={f':{cfg.display}'})
+        if attachment is not None:
+            return attachment
+        reasons.append(reason)
+    if display:
+        raise RuntimeError(f'No existing desktop to show: {"; ".join(reasons)}')
+    session = wayland()
+    if session is not None:
+        if which('grdctl'):
+            try:
+                return Shared(gnome(session, log=log).target(), session)
+            except RuntimeError as error:
+                reasons.append(f'GNOME Remote Desktop: {error}')
+        else:
+            reasons.append('the Wayland desktop has no RDP server this package knows '
+                           '(GNOME Remote Desktop: grdctl is not installed; another one is named with --rdp HOST:PORT)')
     if mode == 'attach':
-        raise RuntimeError(f'No existing desktop to show: {reason}')
-    log(f'no existing desktop to show: {reason}; starting the virtual desktop')
+        raise RuntimeError(f'No existing desktop to show: {"; ".join(reasons)}')
+    log(f'no existing desktop to show: {"; ".join(reasons)}; starting the virtual desktop')
     return None

@@ -18,7 +18,7 @@ import urllib.request
 
 import pytest
 
-from mintbot_desktop import attach
+from mintbot_desktop import attach, rdp
 from mintbot_desktop.session import Config, gui_environment, read_attachment, record_attachment
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -129,30 +129,103 @@ def test_a_named_display_is_the_only_candidate(tmp_path):
     assert all(display == ':5' for display, _ in commands.probed)
 
 
+NO_WAYLAND = lambda: None
+NOTHING = lambda **kwargs: (None, 'this user is logged in at no X11 desktop')
+ALL_PROGRAMS = lambda name: '/usr/bin/' + name
+
+
 def test_choose_follows_the_mode(tmp_path):
     cfg = Config(state=tmp_path)
     found = attach.Attachment(':0', None)
     calls, messages = [], []
     finder = lambda **kwargs: (calls.append(kwargs), (found, None))[1]
-    present = lambda name: '/usr/bin/' + name
-    assert attach.choose(cfg, 'virtual', find=finder, which=present) is None and calls == []
-    assert attach.choose(cfg, 'auto', find=finder, which=present) == found
+    choose = lambda *args, **kwargs: attach.choose(cfg, *args, **{'wayland': NO_WAYLAND, **kwargs})
+    assert choose('virtual', find=finder, which=ALL_PROGRAMS) is None and calls == []
+    assert choose('auto', find=finder, which=ALL_PROGRAMS) == found
     assert calls[-1] == {'display': None, 'exclude': {':13'}}
-    assert attach.choose(cfg, 'attach', ':0', find=finder, which=present) == found
+    assert choose('attach', ':0', find=finder, which=ALL_PROGRAMS) == found
     assert calls[-1]['display'] == ':0'
-    nothing = lambda **kwargs: (None, 'this user is logged in at no X11 desktop')
-    assert attach.choose(cfg, 'auto', find=nothing, which=present, log=messages.append) is None
+    assert choose('auto', find=NOTHING, which=ALL_PROGRAMS, log=messages.append) is None
     assert messages == ['no existing desktop to show: this user is logged in at no X11 desktop; starting the virtual desktop']
     with pytest.raises(RuntimeError, match='No existing desktop to show: this user'):
-        attach.choose(cfg, 'attach', find=nothing, which=present)
-    # Without x0vncserver there is nothing to show an existing desktop with.
+        choose('attach', find=NOTHING, which=ALL_PROGRAMS)
+    # A display named outright that does not answer is not looked past.
+    with pytest.raises(RuntimeError, match='No existing desktop to show: this user'):
+        choose('attach', ':7', find=NOTHING, which=ALL_PROGRAMS, wayland=lambda: {'WAYLAND_DISPLAY': 'wayland-0'})
+    # Without x0vncserver there is nothing to scrape an X11 desktop with.
     messages.clear()
-    assert attach.choose(cfg, 'auto', find=finder, which=lambda name: None, log=messages.append) is None
-    assert messages == ['x0vncserver is not installed (Debian: tigervnc-scraping-server); starting the virtual desktop']
+    assert choose('auto', find=finder, which=lambda name: None, log=messages.append) is None
+    assert messages == ['no existing desktop to show: x0vncserver is not installed (Debian: tigervnc-scraping-server); '
+                        'starting the virtual desktop']
     with pytest.raises(RuntimeError, match='tigervnc-scraping-server'):
-        attach.choose(cfg, 'attach', find=finder, which=lambda name: None)
+        choose('attach', find=finder, which=lambda name: None)
     with pytest.raises(ValueError):
-        attach.choose(cfg, 'sometimes')
+        choose('sometimes')
+
+
+class FakeGnome:
+    """rdp.Gnome as choose() uses it: built on the session environment, asked for the target once."""
+    instances = []
+
+    def __init__(self, environment, *, log, outcome):
+        self.environment, self.log, self.outcome = environment, log, outcome
+        FakeGnome.instances.append(self)
+
+    def target(self):
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        return self.outcome
+
+
+def test_a_wayland_desktop_is_shown_through_gnome_remote_desktop(tmp_path):
+    """No X11 screen to scrape, a Wayland session with grdctl: the session shows
+    GNOME Remote Desktop's RDP server, and the agent's programs get the
+    session's environment."""
+    cfg = Config(state=tmp_path)
+    session = {'WAYLAND_DISPLAY': 'wayland-0', 'DISPLAY': ':0', 'XDG_CURRENT_DESKTOP': 'ubuntu:GNOME'}
+    target = rdp.Target('127.0.0.1', 3389, 'mintbot', 'secret', 'ab' * 32, 'gnome-remote-desktop')
+    gnome = lambda environment, *, log: FakeGnome(environment, log=log, outcome=target)
+    chosen = attach.choose(cfg, 'auto', find=NOTHING, wayland=lambda: session, gnome=gnome, which=ALL_PROGRAMS)
+    assert chosen == attach.Shared(target, session)
+    assert FakeGnome.instances[-1].environment == session
+    # The X11 search runs first and its reason is kept when GNOME has none to offer either.
+    messages = []
+    failing = lambda environment, *, log: FakeGnome(environment, log=log, outcome=RuntimeError('grdctl status failed: no bus'))
+    assert attach.choose(cfg, 'auto', find=NOTHING, wayland=lambda: session, gnome=failing, which=ALL_PROGRAMS,
+                         log=messages.append) is None
+    assert messages == ['no existing desktop to show: this user is logged in at no X11 desktop; '
+                        'GNOME Remote Desktop: grdctl status failed: no bus; starting the virtual desktop']
+    with pytest.raises(RuntimeError, match='GNOME Remote Desktop: grdctl status failed'):
+        attach.choose(cfg, 'attach', find=NOTHING, wayland=lambda: session, gnome=failing, which=ALL_PROGRAMS)
+    # Without grdctl the Wayland desktop has no server this package knows; --rdp names one.
+    messages.clear()
+    no_grdctl = lambda name: None if name == 'grdctl' else '/usr/bin/' + name
+    assert attach.choose(cfg, 'auto', find=NOTHING, wayland=lambda: session, gnome=gnome, which=no_grdctl,
+                         log=messages.append) is None
+    assert 'grdctl is not installed' in messages[0] and '--rdp HOST:PORT' in messages[0]
+
+
+def test_a_named_rdp_server_is_taken_as_is(tmp_path, monkeypatch):
+    cfg = Config(state=tmp_path)
+    monkeypatch.setenv(rdp.USERNAME_VARIABLE, 'owner')
+    monkeypatch.setenv(rdp.PASSWORD_VARIABLE, 'pw')
+    chosen = attach.choose(cfg, 'attach', None, '127.0.0.1:3390', find=NOTHING, wayland=NO_WAYLAND, which=lambda name: None)
+    assert chosen == attach.Shared(rdp.Target('127.0.0.1', 3390, 'owner', 'pw', None, 'given'), {})
+    with pytest.raises(ValueError, match='HOST:PORT'):
+        attach.choose(cfg, 'attach', None, 'nonsense', find=NOTHING, wayland=NO_WAYLAND)
+
+
+def test_find_wayland_reads_the_session_environment(tmp_path):
+    """The compositor, XWayland and the session bus of the owner's session,
+    from this process or the user's systemd manager; logind alone gives an
+    empty one; no Wayland session gives None."""
+    commands = FakeCommands(user_env='WAYLAND_DISPLAY=wayland-0\nDISPLAY=:0\nXDG_CURRENT_DESKTOP=GNOME\nLANG=C\n')
+    assert attach.find_wayland(run=commands, environ={}) == {'WAYLAND_DISPLAY': 'wayland-0', 'DISPLAY': ':0',
+                                                                'XDG_CURRENT_DESKTOP': 'GNOME'}
+    own = {'XDG_SESSION_TYPE': 'wayland', 'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/1000/bus'}
+    assert attach.find_wayland(run=FakeCommands(), environ=own) == own
+    assert attach.find_wayland(run=FakeCommands(sessions=[('3', '1000', 'wayland', '', 'active')]), environ={}, uid=1000) == {}
+    assert attach.find_wayland(run=FakeCommands(sessions=[('3', '1000', 'x11', ':0', 'active')]), environ={}, uid=1000) is None
 
 
 def test_debian_names_the_binary_x0tigervnc_and_the_wrapper_is_second():
@@ -193,6 +266,20 @@ def test_the_attached_display_is_what_the_helpers_use(tmp_path):
     assert gui_environment(cfg)['XAUTHORITY'] == str(tmp_path / 'Xauthority')
     (tmp_path / 'attached.json').write_text('{"display": ""}')
     assert read_attachment(cfg) is None
+    # A Wayland desktop shown over RDP: the compositor and its XWayland, no
+    # credentials on disk, and the agent's programs run in that session.
+    target = rdp.Target('127.0.0.1', 3389, 'mintbot', 'secret', None, 'gnome-remote-desktop')
+    record_attachment(cfg, attach.Shared(target, {'WAYLAND_DISPLAY': 'wayland-0', 'DISPLAY': ':0', 'XDG_RUNTIME_DIR': '/run/user/1000'}))
+    assert 'secret' not in (tmp_path / 'attached.json').read_text()
+    assert read_attachment(cfg) == {'kind': 'rdp', 'display': ':0', 'xauthority': None, 'wayland_display': 'wayland-0'}
+    env = gui_environment(cfg)
+    assert env['DISPLAY'] == ':0' and env['WAYLAND_DISPLAY'] == 'wayland-0' and 'XAUTHORITY' not in env
+    assert env['HOME'] == str(tmp_path)
+    # A Wayland session logind alone knew of names no display: the programs
+    # are not pointed at the virtual desktop's either.
+    record_attachment(cfg, attach.Shared(target, {}))
+    env = gui_environment(cfg)
+    assert read_attachment(cfg)['kind'] == 'rdp' and not any(name in env for name in ('DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY'))
 
 
 def free_port():
@@ -304,7 +391,8 @@ def test_a_session_attaches_to_an_existing_x_display(tmp_path):
                     assert b'rfb.resizeSession = false;' in response.read()
                 # The helpers run on the owner's display with its authority file.
                 result = subprocess.run(args + ['env'], capture_output=True, text=True, timeout=5)
-                assert json.loads(result.stdout) == {'DISPLAY': f':{owner_display}', 'XAUTHORITY': str(authority), 'HOME': str(tmp_path / 'state')}
+                assert json.loads(result.stdout) == {'DISPLAY': f':{owner_display}', 'XAUTHORITY': str(authority),
+                                                     'WAYLAND_DISPLAY': None, 'HOME': str(tmp_path / 'state')}
                 result = subprocess.run(args + ['exec', '--', 'xdpyinfo'], capture_output=True, text=True, timeout=5)
                 assert result.returncode == 0 and '1024x768 pixels' in result.stdout, result.stderr
                 # Nothing of the package's own was started on the owner's screen, and no display of its own either.

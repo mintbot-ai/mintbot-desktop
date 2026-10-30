@@ -1,6 +1,9 @@
 """AXP lifecycle, with an injectable command runner for side-effect-free tests."""
+import base64
 from contextlib import contextmanager
 import fcntl
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -8,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.request
 
@@ -41,6 +45,74 @@ NOVNC = Path('/usr/share/novnc/core/rfb.js')
 OPTIONAL_PROGRAMS = {'openbox': 'openbox', 'idesk': 'idesk', 'chromium': 'chromium', 'xdotool': 'xdotool',
                      'wmctrl': 'wmctrl', 'xclip': 'xclip', 'maim': 'maim'}
 OWNER = '<!-- Managed by mintbot.ai/mintbot-desktop -->'
+
+# IronRDP's browser client (Devolutions, MIT OR Apache-2.0), which shows a
+# Wayland desktop's own RDP server in the panel (app.py, rdp.py). Prebuilt
+# on npm: the web component, and the RDP engine with its WebAssembly inside
+# the script. Pinned by version and by the registry's integrity digest; the
+# install hook fetches them into the prefix (install_viewer), the way it
+# fetches the Playwright driver with pip.
+NPM_REGISTRY = 'https://registry.npmjs.org'
+VIEWER_DIRECTORY = 'ironrdp'
+VIEWER_PACKAGES = (
+    ('@devolutions/iron-remote-desktop', '0.11.0', 'iron-remote-desktop.js',
+     'sha512-ZH8xfabDA+6rAXkW2V3XgRdj0LHOsHoXAzars/H22DmKsHM39LdMfheKFUR3qLaFDM8mjf6DTFngzjgr+Byx0Q=='),
+    ('@devolutions/iron-remote-desktop-rdp', '0.7.0', 'iron-remote-desktop-rdp.js',
+     'sha512-CclAh4OS9aBoPJT0l7bih7ETOHPnB9KjT0drB0a6r5+Qh95pTEuQCx7uFN/XA2AlkFlrqx+DBAMDGYXmgsjHAQ=='),
+)
+VIEWER_NOTICE = '''IronRDP browser client, by Devolutions (https://github.com/Devolutions/IronRDP).
+Licensed under MIT OR Apache-2.0. Fetched prebuilt from the npm registry by
+the mintbot Desktop install hook; the packages and versions are named in
+mintbot_desktop/lifecycle.py.
+'''
+
+
+def tarball_url(name, version):
+    """Where the npm registry serves a package's tarball (`@scope/name` keeps its scope in the path)."""
+    bare = name.rpartition('/')[2]
+    return f'{NPM_REGISTRY}/{name}/-/{bare}-{version}.tgz'
+
+
+def verify_integrity(data, integrity):
+    """`data` is what the registry's Subresource Integrity string (`sha512-<base64>`) names, or ValueError."""
+    algorithm, _, digest = integrity.partition('-')
+    if base64.b64encode(hashlib.new(algorithm, data).digest()).decode() != digest:
+        raise ValueError(f'the download does not match its pinned {algorithm} digest')
+
+
+def fetch_url(url, timeout=120):
+    """The body at `url`, through whatever proxy the environment names (the host's egress proxy)."""
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        return response.read()
+
+
+def fetch_viewer(directory, packages=VIEWER_PACKAGES, fetch=fetch_url):
+    """IronRDP's browser client scripts in `directory`.
+
+    Each package is fetched from the npm registry once per pinned version,
+    checked against the pinned integrity digest, and only its script taken
+    from the tarball. A fetch that fails leaves what was there; the next
+    install or upgrade tries again.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, version, filename, integrity in packages:
+        script = directory / filename
+        stamp = directory / f'{filename}.version'
+        if script.is_file() and stamp.is_file() and stamp.read_text().strip() == version:
+            continue
+        data = fetch(tarball_url(name, version))
+        verify_integrity(data, integrity)
+        with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as tarball:
+            member = tarball.extractfile(f'package/{filename}')
+            if member is None:
+                raise RuntimeError(f'{name} {version} ships no {filename}')
+            body = member.read()
+        staging = script.with_suffix('.tmp')
+        staging.write_bytes(body)
+        os.replace(staging, script)
+        stamp.write_text(version + '\n')
+    (directory / 'NOTICE').write_text(VIEWER_NOTICE)
 
 # A machine's own APT sources (provider mirrors, third-party repositories) are
 # not this package's to depend on: one unreachable or broken source fails the
@@ -91,10 +163,12 @@ def failure_summary(error):
 class Lifecycle:
 
     def __init__(self, *, source, env=None, run=subprocess.run, os_release=Path('/etc/os-release'),
-                 euid=None, which=shutil.which, present=None):
+                 euid=None, which=shutil.which, present=None, fetch=fetch_url, viewer_packages=VIEWER_PACKAGES):
         self.source = Path(source)
         self.env = dict(os.environ if env is None else env)
         self.run = run
+        self.fetch = fetch
+        self.viewer_packages = viewer_packages
         self.os_release = Path(os_release)
         self.euid = os.geteuid() if euid is None else euid
         self.which = which
@@ -153,6 +227,10 @@ class Lifecycle:
             self.checked(['/usr/bin/python3', '-m', 'venv', str(venv)])
         self.checked([str(python), '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',
                       '--cache-dir', str(self.cache / 'pip'), PLAYWRIGHT_REQUIREMENT])
+
+    def install_viewer(self):
+        """IronRDP's browser client in the prefix, for a Wayland desktop's RDP server (VIEWER_PACKAGES)."""
+        fetch_viewer(self.prefix / VIEWER_DIRECTORY, self.viewer_packages, self.fetch)
 
     def validate_record(self):
         record = self.state / 'install.json'
@@ -213,6 +291,7 @@ class Lifecycle:
         record.write_text(json.dumps({'hermes_home': str(self.hermes), 'prefix': str(self.prefix)}))
         record.chmod(0o600)
         self.install_browser_driver()
+        self.install_viewer()
         lib = self.prefix / 'lib'
         lib.mkdir(parents=True, exist_ok=True)
         shutil.copytree(self.source / 'mintbot_desktop', lib / 'mintbot_desktop', dirs_exist_ok=True, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))

@@ -1,7 +1,11 @@
+import base64
+import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import subprocess
+import tarfile
 
 import pytest
 
@@ -34,13 +38,44 @@ class FakeCommands:
         return subprocess.CompletedProcess(args, 0, '', '')
 
 
-def lifecycle(tmp_path, run, os_release='ID=debian\nVERSION_CODENAME=trixie\n', **kwargs):
+class FakeRegistry:
+    """The npm registry as install_viewer sees it: a tarball per pinned viewer package, with matching integrity."""
+
+    def __init__(self, scripts=None):
+        from mintbot_desktop.lifecycle import VIEWER_PACKAGES, tarball_url
+        self.fetched = []
+        self.tarballs, self.packages = {}, []
+        for name, version, filename, _ in VIEWER_PACKAGES:
+            body = (scripts or {}).get(filename, f'// {name} {version}\n').encode()
+            buffer = io.BytesIO()
+            with tarfile.open(fileobj=buffer, mode='w:gz') as tar:
+                info = tarfile.TarInfo(f'package/{filename}')
+                info.size = len(body)
+                tar.addfile(info, io.BytesIO(body))
+                info = tarfile.TarInfo('package/package.json')
+                info.size = 2
+                tar.addfile(info, io.BytesIO(b'{}'))
+            data = buffer.getvalue()
+            self.tarballs[tarball_url(name, version)] = data
+            self.packages.append((name, version, filename, 'sha512-' + base64.b64encode(hashlib.sha512(data).digest()).decode()))
+
+    def __call__(self, url):
+        self.fetched.append(url)
+        if url not in self.tarballs:
+            raise OSError(f'no such tarball {url}')
+        return self.tarballs[url]
+
+
+def lifecycle(tmp_path, run, os_release='ID=debian\nVERSION_CODENAME=trixie\n', registry=None, **kwargs):
     assert importlib.util.find_spec('mintbot_desktop.lifecycle'), 'lifecycle missing'
     from mintbot_desktop.lifecycle import Lifecycle
     (tmp_path/'os-release').write_text(os_release)
     env = {'AXP_PREFIX':str(tmp_path/'prefix'), 'AXP_STATE_DIR':str(tmp_path/'state'), 'AXP_CACHE_DIR':str(tmp_path/'cache'),
            'HERMES_HOME':str(tmp_path/'hermes'), 'AXP_HOST':'mintbot'}
-    return Lifecycle(source=ROOT, env=env, run=run, os_release=tmp_path/'os-release', euid=kwargs.pop('euid', 0), **kwargs)
+    registry = FakeRegistry() if registry is None else registry
+    kwargs.setdefault('viewer_packages', registry.packages)
+    return Lifecycle(source=ROOT, env=env, run=run, os_release=tmp_path/'os-release', euid=kwargs.pop('euid', 0),
+                     fetch=registry, **kwargs)
 
 
 def test_install_idempotently_converges_without_starting_host_service(tmp_path):
@@ -282,6 +317,37 @@ def test_apt_uses_only_declared_debian_mirrors(tmp_path):
         assert f'Dir::State::Lists={tmp_path/"cache"/"apt"/"lists"}' in options
     assert (tmp_path/'cache'/'apt'/'lists'/'partial').is_dir()
     assert not any((tmp_path/'cache'/'apt'/'sources.list.d').iterdir())
+
+
+def test_install_fetches_the_browser_rdp_client_once_per_pinned_version(tmp_path):
+    """IronRDP's scripts come from the npm registry, checked against the
+    pinned integrity, and stay put until the pin moves. A tarball that does
+    not match is refused before anything of it is written."""
+    from mintbot_desktop.lifecycle import VIEWER_PACKAGES, tarball_url
+    registry = FakeRegistry(scripts={'iron-remote-desktop.js': '// component', 'iron-remote-desktop-rdp.js': '// engine'})
+    hooks = lifecycle(tmp_path, FakeCommands(), registry=registry)
+    hooks.install()
+    viewer = tmp_path/'prefix'/'ironrdp'
+    assert (viewer/'iron-remote-desktop.js').read_text() == '// component'
+    assert (viewer/'iron-remote-desktop-rdp.js').read_text() == '// engine'
+    assert (viewer/'iron-remote-desktop-rdp.js.version').read_text().strip() == VIEWER_PACKAGES[1][1]
+    assert 'MIT OR Apache-2.0' in (viewer/'NOTICE').read_text()
+    assert registry.fetched == [tarball_url(name, version) for name, version, *_ in VIEWER_PACKAGES]
+    assert tarball_url('@devolutions/iron-remote-desktop', '0.11.0') == \
+        'https://registry.npmjs.org/@devolutions/iron-remote-desktop/-/iron-remote-desktop-0.11.0.tgz'
+    hooks.install()
+    assert len(registry.fetched) == len(VIEWER_PACKAGES)
+    # A new pin (an upgrade) fetches again; a download that is not what the pin names is refused.
+    moved = [(name, '9.9.9', filename, integrity) for name, version, filename, integrity in registry.packages]
+    registry.tarballs = {tarball_url(name, '9.9.9'): registry.tarballs[tarball_url(name, version)]
+                         for name, version, *_ in registry.packages}
+    lifecycle(tmp_path, FakeCommands(), registry=registry, viewer_packages=moved).install()
+    assert (viewer/'iron-remote-desktop.js.version').read_text().strip() == '9.9.9'
+    tampered = [(name, '1.0.0', filename, 'sha512-' + 'A' * 86 + '==') for name, _, filename, _ in registry.packages]
+    registry.tarballs = {tarball_url(name, '1.0.0'): b'not the tarball' for name, *_ in registry.packages}
+    with pytest.raises(ValueError, match='pinned sha512 digest'):
+        lifecycle(tmp_path, FakeCommands(), registry=registry, viewer_packages=tampered).install()
+    assert (viewer/'iron-remote-desktop.js').read_text() == '// component'
 
 
 def test_install_declares_the_scraping_server_package(tmp_path):

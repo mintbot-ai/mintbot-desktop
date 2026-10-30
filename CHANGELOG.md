@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- A Wayland desktop's own screen, through its RDP server. GNOME on Ubuntu
+  26.04 (and 25.10, Debian 13) is Wayland-only, with no X11 root window to
+  scrape. Finding a Wayland session and no X11 one, `serve` now shows the
+  desktop's own remote desktop server in the panel: GNOME Remote Desktop,
+  set up through `grdctl` when Desktop Sharing is off (credentials of the
+  package's own in the keyring, view-only off, the user's
+  `gnome-remote-desktop.service` started and enabled) and used as it is
+  when the owner had it on (their credentials; a view-only warning in the
+  log); another server with `--rdp HOST:PORT` and credentials in the
+  environment. The view is IronRDP's browser client (Devolutions, MIT OR
+  Apache-2.0), fetched pinned from the npm registry by the install hook;
+  the gateway is its RDCleanPath proxy (`rdcleanpath.py`: TCP, X.224, TLS
+  with the fingerprint grdctl reports, one PDU per WebSocket message, since
+  IronRDP drops what follows its connection sequence's last PDU in the
+  same message). Nothing of the package's own is started; the session ends
+  once the server has been gone for half a minute (the owner logged out),
+  watching the kernel's socket tables rather than connecting, which the
+  server logs as errors. `env`, `exec` and `browser` get the session's
+  `WAYLAND_DISPLAY` and XWayland `DISPLAY`. An end-to-end test stands
+  FreeRDP's shadow server in for GNOME's and drives the view with a
+  headless Chromium.
 - A computer's own desktop. On a Linux computer whose owner is logged in
   at an X11 desktop (mintbot on the customer's own computer), `serve` shows
   **that** screen in the panel instead of starting a desktop of its own:

@@ -253,43 +253,63 @@ ATTACHMENT_FILE = 'attached.json'
 
 
 def record_attachment(cfg, attachment):
-    """Remember the existing display the session shows, or forget one (the virtual desktop)."""
+    """Remember the existing desktop the session shows, or forget one (the virtual desktop).
+
+    An X11 display (attach.Attachment) is recorded with its authority
+    file; a Wayland session shown over RDP (attach.Shared) with what of its
+    environment the agent's programs need. Credentials are never written.
+    """
     path = cfg.state / ATTACHMENT_FILE
     if attachment is None:
         path.unlink(missing_ok=True)
         return
+    if hasattr(attachment, 'target'):
+        env = attachment.environment
+        record = {'kind': 'rdp', 'display': env.get('DISPLAY'), 'xauthority': env.get('XAUTHORITY'),
+                  'wayland_display': env.get('WAYLAND_DISPLAY'), 'rdp': attachment.target.destination}
+    else:
+        record = {'kind': 'x11', 'display': attachment.display, 'xauthority': attachment.xauthority}
     staging = path.with_suffix('.tmp')
     fd = os.open(staging, os.O_CREAT | os.O_TRUNC | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'w') as handle:
-        json.dump({'display': attachment.display, 'xauthority': attachment.xauthority}, handle)
+        json.dump(record, handle)
         handle.write('\n')
     os.replace(staging, path)
 
 
 def read_attachment(cfg):
-    """{'display', 'xauthority'} of the existing display the session shows, or None."""
+    """The recorded existing desktop: {'kind', 'display', 'xauthority', 'wayland_display'}, or None."""
     try:
         data = json.loads((cfg.state / ATTACHMENT_FILE).read_text())
     except (OSError, ValueError):
         return None
-    if not isinstance(data, dict) or not isinstance(data.get('display'), str) or not data['display']:
+    if not isinstance(data, dict):
         return None
-    return {'display': data['display'], 'xauthority': data.get('xauthority') or None}
+    values = {key: data.get(key) if isinstance(data.get(key), str) and data.get(key) else None
+              for key in ('display', 'xauthority', 'wayland_display')}
+    kind = data.get('kind') or 'x11'
+    # An X11 record without a display is no record; a Wayland session logind
+    # alone knew of may have none to name (the programs then say so).
+    if kind != 'rdp' and values['display'] is None:
+        return None
+    return {'kind': kind, **values}
 
 
 def gui_environment(cfg):
     env = dict(os.environ)
     env.update(DISPLAY=f':{cfg.display}', XAUTHORITY=str(cfg.state / 'Xauthority'), HOME=str(cfg.state),
                XDG_CONFIG_HOME=str(cfg.state / 'config'), XDG_CACHE_HOME=str(cfg.state / 'cache'))
+    env.pop('WAYLAND_DISPLAY', None)
     attached = read_attachment(cfg)
     if attached:
-        # The computer's own desktop: its display and its authority file.
-        # HOME and the XDG directories stay the session's own, so the
-        # agent's programs keep their settings out of the owner's.
-        env['DISPLAY'] = attached['display']
-        del env['XAUTHORITY']
-        if attached['xauthority']:
-            env['XAUTHORITY'] = attached['xauthority']
+        # The computer's own desktop: its display (XWayland's, on Wayland)
+        # and its authority file, and its compositor. HOME and the XDG
+        # directories stay the session's own, so the agent's programs keep
+        # their settings out of the owner's.
+        for name, key in (('DISPLAY', 'display'), ('XAUTHORITY', 'xauthority'), ('WAYLAND_DISPLAY', 'wayland_display')):
+            env.pop(name, None)
+            if attached[key]:
+                env[name] = attached[key]
     return env
 
 

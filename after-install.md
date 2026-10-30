@@ -12,12 +12,15 @@ HTTP/WebSocket proxy setup. There is no standalone host panel.
 
 On a server this is a root-capable desktop of the package's own with access
 to this agent server, not a sandbox for untrusted pages. On your own Linux
-computer, with you logged in at an X11 desktop, the view shows **your own
+computer, with you logged in at your desktop, the view shows **your own
 screen**: whoever opens it sees and operates your computer, and the agent's
-programs appear on your desktop (a Wayland login gets the package's own
-desktop instead). Chromium uses a separate profile; the manifest declares
-unrestricted outbound browsing. The ordinary Hermes browser tool does not
-automatically join this session.
+programs appear on your desktop. An X11 desktop is shared directly; a
+Wayland desktop (GNOME) through GNOME Remote Desktop, which the session
+turns on for the panel if you had Desktop Sharing off (Settings → System →
+Remote Desktop shows it, and your own credentials are kept if you had it
+on). Chromium uses a separate profile; the manifest declares unrestricted
+outbound browsing. The ordinary Hermes browser tool does not automatically
+join this session.
 
 Save work before stopping. The host stops its own desktop service; standalone
 users must stop their foreground runner or chosen supervisor before disable or

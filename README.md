@@ -65,11 +65,80 @@ names the display outright and insists on it). A desktop that appears later
 is picked up by the next start; one that goes away (the owner logs out)
 makes X0tigervnc exit, the session gives up after the restart budget, and
 the host's `on-failure` restart looks for a desktop again, finding none and
-starting the virtual one. A Wayland session is not attached to: its `DISPLAY`
-is XWayland, whose root window shows nothing, so the virtual desktop is
-started and the log says why. `HOME` and the XDG directories stay the
-session's own in both modes, so the agent's programs keep their settings out
+starting the virtual one. `HOME` and the XDG directories stay the
+session's own in every mode, so the agent's programs keep their settings out
 of the owner's.
+
+#### A Wayland desktop: the computer's own RDP server
+
+A Wayland session (GNOME on Ubuntu since 25.10 and on Debian 13, KDE Plasma
+6) has no X11 root window to scrape: its `DISPLAY` is XWayland, whose root
+window shows nothing. Such a desktop ships its own remote desktop server,
+and it speaks RDP: GNOME Remote Desktop (`gnome-remote-desktop`, driven by
+`grdctl`) and KDE's krdp. `serve` then shows **that** server in the panel
+(`mintbot_desktop/rdp.py`): having found no X11 session but a Wayland one
+(the process environment, the user's systemd manager environment, logind),
+it asks `grdctl status --show-credentials` and
+
+- when Desktop Sharing is off, turns it on for the panel: credentials of
+  the package's own (`grdctl rdp set-credentials`, user `mintbot`, a random
+  password that lives in the keyring and nowhere on disk), the view-only
+  switch off, `grdctl rdp enable`, and the user's
+  `gnome-remote-desktop.service` started and enabled;
+- when the owner had it on already, uses their credentials as they are and
+  warns in the log when they left it view-only (the panel then shows the
+  screen but cannot operate it; `grdctl rdp disable-view-only` changes that).
+
+Another server, or GNOME's configured by hand, is named outright with
+`--rdp HOST:PORT` (`MINTBOT_DESKTOP_RDP`) and the credentials in
+`MINTBOT_DESKTOP_RDP_USERNAME` / `MINTBOT_DESKTOP_RDP_PASSWORD`.
+
+The browser cannot speak RDP by itself. The view is then
+[IronRDP](https://github.com/Devolutions/IronRDP)'s web client (Devolutions,
+MIT OR Apache-2.0; `@devolutions/iron-remote-desktop` and
+`@devolutions/iron-remote-desktop-rdp` from the npm registry, pinned by
+version and integrity in `lifecycle.py` and fetched into the prefix by the
+install hook), and the gateway is its **RDCleanPath proxy**
+(`mintbot_desktop/rdcleanpath.py`): the client sends one DER-encoded PDU with
+the X.224 connection request over the `/desktop/rdp` WebSocket, the gateway
+opens TCP to the server on this computer, forwards the request, reads the
+X.224 confirm, upgrades its own side to TLS (pinning the certificate
+fingerprint grdctl reports) and answers with the confirm and the server's
+certificate chain; from then on the WebSocket carries the RDP stream in the
+clear between browser and gateway, inside TLS between gateway and server.
+The gateway hands the server's stream to the browser one PDU per WebSocket
+message (TPKT or fast-path framing): IronRDP's client drops what follows
+the last PDU of its connection sequence in the same message, and a
+finalization PDU coalesced with the first update by TCP left it waiting for
+an update it had already been sent. The client's username and password
+come from `/desktop/rdp.json`, behind the same bearer token as everything
+else. The gateway only ever opens the one server the session was started
+for, whatever destination the client names.
+
+Nothing else of the package's is started: no X server, no VNC port, no
+browser on the owner's screen. The session watches that something still
+listens on the server's port (the kernel's socket tables, not connections,
+which the server would log as errors every few seconds) and gives up when
+it has been gone for half a minute: the owner logged out, the host's
+restart looks again. `env`, `exec` and `browser` get the session's
+`WAYLAND_DISPLAY`, its XWayland `DISPLAY` and `XAUTHORITY`
+(`state/attached.json`, `kind: rdp`), so the agent's Chromium opens on the
+owner's desktop as before. The view keeps the screen's size and scales it
+to fit; input goes to the owner's pointer and keyboard.
+
+| | X11 desktop | Wayland desktop |
+|---|---|---|
+| screen served by | X0tigervnc, RFB on the VNC port | the desktop's own RDP server (gnome-remote-desktop, krdp) |
+| view | noVNC | IronRDP web client |
+| gateway | VNC authentication, WebSocket to RFB | RDCleanPath proxy: TCP, X.224, TLS, one PDU per message |
+| credentials | the session's VNC password file | grdctl's (keyring), or the environment's for `--rdp` |
+| chosen when | an X11 display answers xdpyinfo | a Wayland session and grdctl, or `--rdp` |
+
+The real-GUI smoke for this path (`tests/test_rdp_e2e.py`) stands FreeRDP's
+shadow server (`freerdp3-shadow-x11`) in for GNOME's: it shares a red
+stand-in X display over RDP with TLS, a headless Chromium opens the view
+through the gateway, and the frame IronRDP draws is red. GNOME Remote
+Desktop itself needs a Wayland login and is proven on a real computer.
 
 Showing the owner's own screen in the panel is a bigger thing than a
 desktop on a server: whoever can open the panel view sees and operates the
@@ -143,7 +212,13 @@ computer's own), and the hook names what is missing by Debian package. Missing
 optional programs (openbox, idesk, chromium, xdotool, wmctrl, xclip, maim)
 cost a feature each and are listed on stderr, not refused. Distro
 noVNC and Python dependencies receive distro updates; they are not vendored or
-byte-pinned in the source artifact.
+byte-pinned in the source artifact. Two things the hook fetches itself, on
+every host, pinned: the Playwright driver from PyPI into the prefix's
+virtualenv (`browse`), and IronRDP's browser client from the npm registry
+into `<prefix>/ironrdp` (the view of a Wayland desktop; version and
+integrity digest in `lifecycle.py`, fetched once per pinned version).
+GNOME Remote Desktop itself is the customer's desktop's own (`grdctl`); the
+hook installs no desktop environment.
 
 ## Lifecycle
 
@@ -320,11 +395,15 @@ Debian 13 agent with the new host/protocol code and consent, verify:
    in at an X11 desktop): the panel shows the owner's screen, input from the
    panel moves their pointer, `exec` runs on their display, logging out ends
    the session and the restart brings the virtual desktop, logging in again
-   plus a restart brings their screen back. A Wayland login gets the virtual
-   desktop with the reason in the log. The real-GUI smoke covers the
-   attach path with a stand-in X server (`tests/test_attach.py`); DEV's
-   Beaver testbed is a server with no desktop session and only proves the
-   virtual path.
+   plus a restart brings their screen back. A Wayland login (Ubuntu 26.04's
+   GNOME) gets the owner's screen through GNOME Remote Desktop: Desktop
+   Sharing turned on by the session when it was off, the owner's own
+   credentials kept when it was on, input from the panel moving their
+   pointer, the IronRDP view reconnecting after a service restart. The
+   real-GUI smokes cover the X11 attach path with a stand-in X server
+   (`tests/test_attach.py`) and the RDP path with FreeRDP's shadow server
+   and a headless Chromium (`tests/test_rdp_e2e.py`); DEV's Beaver testbed
+   is a server with no desktop session and only proves the virtual path.
 
 ## Releasing
 

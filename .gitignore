@@ -7,3 +7,4 @@ dist/
 *.key
 *.pem
 .ops/
+ironrdp/

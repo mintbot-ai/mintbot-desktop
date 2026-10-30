@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 
-from . import attach, browse
+from . import attach, browse, rdp
 from .session import (Config, Children, browser_command, display_in_use, gui_environment, open_browser,
                       port_available, prepare, record_attachment, vnc_command, write_desktop)
 
@@ -261,7 +261,55 @@ class ExistingDesktop:
         self.scraper.check()
 
 
-async def serve(cfg, mode='auto', display=None):
+class SharedDesktop:
+    """The computer's own desktop shown by its own RDP server (attach.Shared, rdp.py).
+
+    The server is the owner's session's (gnome-remote-desktop, krdp): not a
+    child of this session, not restarted by it. It is watched the only way
+    it can be: as long as something listens on its port, it is there
+    (rdp.port_listened: the kernel's tables, since a connection would land
+    in the server's log as an error). One that is gone for a while (the
+    owner logged out) ends the session, and the host's restart looks for a
+    desktop to show again.
+    """
+    PROBE_INTERVAL = 5.0
+    GRACE = 30.0
+
+    def __init__(self, target, clock=time.monotonic, listened=rdp.port_listened):
+        self.target, self.clock, self.listened = target, clock, listened
+        self.probed = self.last_seen = clock()
+
+    @classmethod
+    async def start(cls, shared):
+        log(f'showing the existing desktop through its RDP server at {shared.target.destination} ({shared.target.source})')
+        if not await asyncio.to_thread(rdp.listening, shared.target.host, shared.target.port, 3.0):
+            raise RuntimeError(f'the RDP server at {shared.target.destination} does not accept connections')
+        return cls(shared.target)
+
+    async def check(self):
+        now = self.clock()
+        if now - self.probed < self.PROBE_INTERVAL:
+            return
+        self.probed = now
+        present = self.listened(self.target.port)
+        if present is None:
+            present = await asyncio.to_thread(rdp.listening, self.target.host, self.target.port, 3.0)
+        if present:
+            self.last_seen = now
+        elif now - self.last_seen >= self.GRACE:
+            raise RuntimeError(f'the RDP server at {self.target.destination} has been gone for {self.GRACE:g}s; giving up')
+
+
+def viewer_directory(cfg):
+    """Where lifecycle.install_viewer put IronRDP's browser client: the install prefix, or the checkout's."""
+    try:
+        prefix = Path(json.loads((cfg.state / 'install.json').read_text())['prefix'])
+    except (OSError, ValueError, KeyError, TypeError):
+        prefix = Path(__file__).resolve().parents[1]
+    return prefix / 'ironrdp'
+
+
+async def serve(cfg, mode='auto', display=None, rdp_address=None):
     from aiohttp import web
     from .app import create_app
 
@@ -272,9 +320,10 @@ async def serve(cfg, mode='auto', display=None):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RuntimeError('Another desktop session already uses this state directory') from None
-        attachment = attach.choose(cfg, mode, display, log=log)
+        attachment = attach.choose(cfg, mode, display, rdp_address, log=log)
         record_attachment(cfg, attachment)
-        ports = [('web', cfg.web_port), ('VNC', cfg.vnc_port)]
+        shared = attachment if isinstance(attachment, attach.Shared) else None
+        ports = [('web', cfg.web_port)] if shared else [('web', cfg.web_port), ('VNC', cfg.vnc_port)]
         if attachment is None:
             if display_in_use(cfg.display):
                 raise RuntimeError(f'Display :{cfg.display} already exists; will not take over another session')
@@ -290,12 +339,15 @@ async def serve(cfg, mode='auto', display=None):
         with Children() as children:
             if attachment is None:
                 desktop = await VirtualDesktop.start(cfg, children, env, stop)
+            elif shared:
+                desktop = await SharedDesktop.start(shared)
             else:
                 desktop = await ExistingDesktop.start(cfg, children, env, stop, attachment)
             if desktop is None:
                 return
             app = create_app(token=(cfg.state / 'token').read_text(), password=(cfg.state / 'vnc-secret').read_text(),
-                             rfb_port=cfg.vnc_port, resize_session=attachment is None)
+                             rfb_port=cfg.vnc_port, resize_session=attachment is None,
+                             rdp=shared.target if shared else None, ironrdp=viewer_directory(cfg))
             runner = web.AppRunner(app, access_log=None)
             try:
                 await runner.setup()
@@ -317,9 +369,11 @@ def main():
         parser.add_argument('--'+name, type=int)
     # Which desktop `serve` shows (attach.py): the computer's own when there
     # is one (auto), that one only (attach), or the package's own (virtual).
-    # `--attach` names the existing display outright instead of looking.
+    # `--attach` names the existing X display outright instead of looking,
+    # `--rdp` the existing desktop's RDP server (credentials: rdp.py).
     parser.add_argument('--mode', choices=attach.MODES, default=os.environ.get('MINTBOT_DESKTOP_MODE') or 'auto')
     parser.add_argument('--attach', metavar='DISPLAY', default=os.environ.get('MINTBOT_DESKTOP_ATTACH') or None)
+    parser.add_argument('--rdp', metavar='HOST:PORT', default=os.environ.get('MINTBOT_DESKTOP_RDP') or None)
     parser.add_argument('command', choices=('serve', 'prepare', 'env', 'exec', 'browse', 'browser'))
     parser.add_argument('args', nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -330,11 +384,12 @@ def main():
     if args.command == 'prepare':
         prepare(cfg)
     elif args.command == 'serve':
-        asyncio.run(serve(cfg, 'attach' if args.attach else args.mode, args.attach))
+        asyncio.run(serve(cfg, 'attach' if args.attach or args.rdp else args.mode, args.attach, args.rdp))
     elif args.command == 'env':
         env = gui_environment(cfg)
-        # XAUTHORITY is null on an existing display that asks for no authority file.
-        print(json.dumps({key: env.get(key) for key in ('DISPLAY', 'XAUTHORITY', 'HOME')}))
+        # XAUTHORITY is null on an existing display that asks for no authority
+        # file; WAYLAND_DISPLAY is set on a Wayland desktop only.
+        print(json.dumps({key: env.get(key) for key in ('DISPLAY', 'XAUTHORITY', 'WAYLAND_DISPLAY', 'HOME')}))
     elif args.command == 'browse':
         browse.main(cfg, args.args[1:] if args.args[:1] == ['--'] else args.args)
     elif args.command == 'browser':

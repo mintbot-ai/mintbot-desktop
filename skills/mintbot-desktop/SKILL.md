@@ -11,7 +11,9 @@ The installed launcher is `@LAUNCHER@`; private state is `@STATE@`.
 The panel and the agent share one X session: the user watches everything
 you do there live, and you see what they did. On a server that is the
 package's own desktop, normally `:13`. On the user's own Linux computer
-(`@LAUNCHER@ env` shows a display such as `:0`) it is **their real screen**:
+(`@LAUNCHER@ env` shows a display such as `:0`, and `WAYLAND_DISPLAY` on a
+Wayland desktop, whose screen the panel gets through the desktop's own RDP
+server) it is **their real screen**:
 the windows there are theirs, the pointer and keyboard you drive are theirs,
 and your programs appear on their desktop. Do not close, move or type into
 windows you did not open, keep what you open small and tidy, and prefer
