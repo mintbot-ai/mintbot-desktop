@@ -401,6 +401,22 @@ def test_without_apt_what_is_missing_is_named_by_package(tmp_path):
         lifecycle(tmp_path, commands, euid=1000, which=ALL_PROGRAMS, present=lambda path: True).install()
 
 
+def test_without_apt_a_python_without_venv_is_named_by_package(tmp_path):
+    """The browser driver's virtualenv needs venv's ensurepip, which Debian and
+    Ubuntu ship in python3-venv; a mintbot local computer's root helper
+    installs it, a bare computer must have it already."""
+    commands = FakeCommands()
+    commands.fail = 'import ensurepip, venv'
+    with pytest.raises(RuntimeError, match='python3-venv'):
+        lifecycle(tmp_path, commands, euid=1000, which=ALL_PROGRAMS, present=lambda path: True).install()
+    assert not any(c[1:3] == ['-m', 'venv'] for c in commands.calls)
+    # A virtualenv already there needs nothing more from the system Python.
+    (tmp_path/'prefix'/'venv'/'bin').mkdir(parents=True)
+    (tmp_path/'prefix'/'venv'/'bin'/'python').touch()
+    lifecycle(tmp_path, commands, euid=1000, which=ALL_PROGRAMS, present=lambda path: True).install()
+    assert (tmp_path/'prefix'/'bin'/'mintbot-desktop').is_file()
+
+
 def test_without_apt_missing_optional_programs_cost_a_feature_not_the_install(tmp_path, capsys):
     required_only = lambda name: '/usr/bin/' + name if name in ('Xtigervnc', 'tigervncpasswd', 'xauth', 'xdpyinfo', 'xprop') else None
     hooks = lifecycle(tmp_path, FakeCommands(), euid=1000, which=required_only, present=lambda path: True)

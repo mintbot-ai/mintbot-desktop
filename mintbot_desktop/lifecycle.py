@@ -267,6 +267,11 @@ class Lifecycle:
             missing['noVNC'] = 'novnc'
         if self.run(['/usr/bin/python3', '-c', 'import aiohttp, Cryptodome'], capture_output=True, text=True).returncode:
             missing['python3 aiohttp and pycryptodome'] = 'python3-aiohttp python3-pycryptodome'
+        # The browser driver's virtualenv (install_browser_driver): Debian and
+        # Ubuntu ship venv's ensurepip separately, in python3-venv.
+        if (not (self.prefix / 'venv' / 'bin' / 'python').exists()
+                and self.run(['/usr/bin/python3', '-c', 'import ensurepip, venv'], capture_output=True, text=True).returncode):
+            missing['python3 venv'] = 'python3-venv'
         if missing:
             raise RuntimeError('APT is not run here (not root on Debian); install these first: '
                                + ' '.join(dict.fromkeys(missing.values())) + ' (missing: ' + ', '.join(missing) + ')')

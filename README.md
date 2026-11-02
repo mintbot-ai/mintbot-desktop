@@ -206,11 +206,16 @@ system archive cache. APT runs only as root on Debian. Elsewhere (the agent
 unprivileged on a customer's own computer; Ubuntu, whose packages are not
 Debian's and whose Chromium is a snap) the hook installs nothing: what a
 session cannot do without must be there already (`tigervncpasswd`, `xauth`,
-`xdpyinfo`, `xprop`, noVNC, python3 `aiohttp` and `pycryptodome`, and one X
+`xdpyinfo`, `xprop`, noVNC, python3 `aiohttp` and `pycryptodome`, python3's
+`venv` (`python3-venv`, for the browser driver's virtualenv), and one X
 server: `Xtigervnc` for a desktop of the package's own or `X0tigervnc` for the
 computer's own), and the hook names what is missing by Debian package. Missing
 optional programs (openbox, idesk, chromium, xdotool, wmctrl, xclip, maim)
-cost a feature each and are listed on stderr, not refused. Distro
+cost a feature each and are listed on stderr, not refused. On a mintbot
+local computer the agent's host installs these packages before the hook
+runs, through the computer's own root helper (mintbot's
+`local_linux/ext_packages.py`: a fixed list for this extension, from the
+computer's own APT sources), so the check passes there. Distro
 noVNC and Python dependencies receive distro updates; they are not vendored or
 byte-pinned in the source artifact. Two things the hook fetches itself, on
 every host, pinned: the Playwright driver from PyPI into the prefix's

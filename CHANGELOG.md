@@ -44,7 +44,11 @@
   on a customer's computer) or on another distribution (Ubuntu) it installs
   nothing and checks that the programs a session cannot do without are
   there (one X server suffices), naming what is missing by Debian package;
-  missing optional programs are listed, not refused.
+  missing optional programs are listed, not refused. python3's `venv`
+  (`python3-venv`) is among the required ones: the browser driver's
+  virtualenv needs it, and without it the install failed later on an
+  ensurepip error. On a mintbot local computer the host's root helper
+  installs the packages first, so the install goes through there.
 
 ## v0.1.14 (2026-10-28)
 
