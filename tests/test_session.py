@@ -38,6 +38,19 @@ def test_safe_config_and_browser_commands(tmp_path):
         s.Config(state=tmp_path, web_port=6080)
 
 
+def test_the_x_server_takes_mesas_egl_only_when_it_is_installed(tmp_path):
+    """NVIDIA's EGL vendor segfaulted Xtigervnc's GLX init on a computer with its driver."""
+    s = session_module()
+    mesa = tmp_path / '50_mesa.json'
+    base = {'DISPLAY': ':13'}
+    assert s.x_server_environment(base, mesa) == base
+    mesa.write_text('{}')
+    env = s.x_server_environment(base, mesa)
+    assert env == {'DISPLAY': ':13', '__EGL_VENDOR_LIBRARY_FILENAMES': str(mesa)} and base == {'DISPLAY': ':13'}
+    chosen = {'__EGL_VENDOR_LIBRARY_FILENAMES': '/elsewhere.json'}
+    assert s.x_server_environment(chosen, mesa) == chosen
+
+
 def test_prepare_is_idempotent_and_private(tmp_path):
     s = session_module()
     cfg = s.Config(state=tmp_path / 'state', display=193, web_port=16081, vnc_port=15913, cdp_port=19223)

@@ -33,6 +33,25 @@ def vnc_command(cfg):
             '-auth', str(cfg.state / 'Xauthority'), '-AlwaysShared', '-nolisten', 'tcp']
 
 
+MESA_EGL_VENDOR = Path('/usr/share/glvnd/egl_vendor.d/50_mesa.json')
+
+
+def x_server_environment(env, mesa=MESA_EGL_VENDOR):
+    """The virtual X server's environment: GLX on Mesa's EGL only.
+
+    Xtigervnc renders in software, but its GLX extension asks libglvnd for an
+    EGL, and libglvnd tries every installed vendor. On a computer with the
+    NVIDIA driver that is NVIDIA's first, whose GBM backend segfaults without
+    a render node (the service has no devices), and the X server dies before
+    it ever answers. Naming Mesa's vendor alone keeps GLX working on every
+    machine. A vendor the environment chose already is left alone.
+    """
+    env = dict(env)
+    if '__EGL_VENDOR_LIBRARY_FILENAMES' not in env and Path(mesa).is_file():
+        env['__EGL_VENDOR_LIBRARY_FILENAMES'] = str(mesa)
+    return env
+
+
 def browser_command(cfg, env):
     args = ['chromium', '--no-sandbox', '--disable-dev-shm-usage', '--disable-quic',
             '--no-first-run', '--no-default-browser-check', '--disable-background-networking',

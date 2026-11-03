@@ -14,7 +14,8 @@ import time
 
 from . import attach, browse, rdp
 from .session import (Config, Children, browser_command, display_in_use, gui_environment, open_browser,
-                      port_available, prepare, record_attachment, vnc_command, write_desktop)
+                      port_available, prepare, record_attachment, vnc_command, write_desktop,
+                      x_server_environment)
 
 
 # A window manager or browser that dies this often is broken, not unlucky.
@@ -200,7 +201,7 @@ class VirtualDesktop:
     @classmethod
     async def start(cls, cfg, children, env, stop):
         """The desktop, up; None when the session was asked to stop meanwhile."""
-        x = children.start(vnc_command(cfg), env=env)
+        x = children.start(vnc_command(cfg), env=x_server_environment(env))
         await wait_for_display(x, env, stop, cfg.display)
         if stop.is_set():
             return None
@@ -218,7 +219,13 @@ class VirtualDesktop:
             icons = Supervised(children, 'desktop icons', ['idesk'], env)
         else:
             log('idesk is not installed; the browser icon is missing, the openbox menu still opens it')
-        browser = Once(children, 'browser', browser_command(cfg, env), env)
+        # Chromium is optional too (Ubuntu ships it as a snap only): without
+        # it the desktop still serves, and `browse` says the browser is absent.
+        browser = None
+        if shutil.which('chromium'):
+            browser = Once(children, 'browser', browser_command(cfg, env), env)
+        else:
+            log('chromium is not installed; the desktop runs without a browser')
         return cls(x, manager, icons, browser, env, stop)
 
     async def check(self):
@@ -233,7 +240,8 @@ class VirtualDesktop:
                 self.icons.restart()
         if self.icons:
             self.icons = check_icons(self.icons)
-        self.browser.check()
+        if self.browser:
+            self.browser.check()
 
 
 class ExistingDesktop:
