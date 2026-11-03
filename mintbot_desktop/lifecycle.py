@@ -303,7 +303,10 @@ class Lifecycle:
         bindir = self.prefix / 'bin'
         bindir.mkdir(exist_ok=True)
         launcher = bindir / 'mintbot-desktop'
-        launcher.write_text('#!/bin/sh\nset -eu\nexport PYTHONPATH=' + shlex.quote(str(lib)) + '\nexport AXP_STATE_DIR=' + shlex.quote(str(self.state)) + '\nexec /usr/bin/python3 -m mintbot_desktop "$@"\n')
+        # -P: the current directory is not put on sys.path, so a `mintbot_desktop`
+        # package in the caller's cwd (the retained artifact, a checkout) does
+        # not shadow the installed one in PYTHONPATH.
+        launcher.write_text('#!/bin/sh\nset -eu\nexport PYTHONPATH=' + shlex.quote(str(lib)) + '\nexport AXP_STATE_DIR=' + shlex.quote(str(self.state)) + '\nexec /usr/bin/python3 -P -m mintbot_desktop "$@"\n')
         launcher.chmod(0o755)
         skill.parent.mkdir(parents=True, exist_ok=True)
         skill.write_text((self.source / 'skills' / 'mintbot-desktop' / 'SKILL.md').read_text().replace('@LAUNCHER@', shlex.quote(str(launcher))).replace('@STATE@', shlex.quote(str(self.state))))

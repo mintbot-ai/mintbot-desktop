@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Without Chromium (Ubuntu ships it as a snap only, and the install hook
+  installs nothing on a non-Debian computer) the virtual desktop no longer
+  starts idesk: the one icon was the browser's, pointed at Debian's
+  `chromium.png`, and idesk exits when an icon's image is missing, so the
+  icon layer restarted four times and gave up on every start. The icon is
+  not written then, and the openbox root menu says "No browser installed
+  (chromium)" in place of the Browser entry that could open nothing.
+- The launcher runs the interpreter with `-P`: run from a directory with a
+  `mintbot_desktop` package in it (the retained artifact, a checkout) it
+  used to import that one instead of the installed package, and `browse
+  status` then reported the driver missing.
+- `attach`: an authority file behind a directory this account may not look
+  into (`/run/user/<uid>/gdm/Xauthority` of another user; mode 0700) is
+  skipped instead of ending the look-up with a PermissionError.
+
 - A Wayland desktop's own screen, through its RDP server. GNOME on Ubuntu
   26.04 (and 25.10, Debian 13) is Wayland-only, with no X11 root window to
   scrape. Finding a Wayland session and no X11 one, `serve` now shows the

@@ -119,6 +119,16 @@ def _is_wayland(env):
     return bool(env.get('WAYLAND_DISPLAY')) or env.get('XDG_SESSION_TYPE') == 'wayland'
 
 
+def _is_readable_file(path):
+    """An authority file this process may read; a file behind a directory it
+    may not even look into (another account's /run/user/<uid>/gdm, mode
+    0700) is simply not one -- pathlib raises PermissionError there."""
+    try:
+        return Path(path).is_file() and os.access(path, os.R_OK)
+    except OSError:
+        return False
+
+
 def find_display(*, display=None, exclude=(), run=subprocess.run, environ=None, uid=None, home=None, probe=None):
     """The X11 display of the desktop this user is logged in at: (Attachment, None), or (None, why not).
 
@@ -158,7 +168,7 @@ def find_display(*, display=None, exclude=(), run=subprocess.run, environ=None, 
             continue
         tried.append(candidate)
         for authority in dict.fromkeys([xauthority, *authorities, None]):
-            if authority is not None and not Path(authority).is_file():
+            if authority is not None and not _is_readable_file(authority):
                 continue
             if probe(candidate, authority):
                 return Attachment(candidate, authority), None

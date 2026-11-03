@@ -183,8 +183,18 @@ OPENBOX_MENU = """<?xml version="1.0" encoding="UTF-8"?>
 </openbox_menu>
 """
 
+# Without Chromium (Ubuntu ships it as a snap only) there is nothing the
+# icon or the menu entry could open: the menu says so instead.
+OPENBOX_MENU_NO_BROWSER = """<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+  <menu id="root-menu" label="mintbot Desktop">
+    <separator label="No browser installed (chromium)" />
+  </menu>
+</openbox_menu>
+"""
 
-def write_desktop(cfg):
+
+def write_desktop(cfg, browser=True):
     """The desktop icon (idesk, read from HOME) and the openbox root menu (read
     from XDG_CONFIG_HOME): both open the browser the user closed. Rewritten
     on every start, so a moved state directory or interpreter is followed.
@@ -192,15 +202,26 @@ def write_desktop(cfg):
     idesk hands the icon's command to `sh -c`, from its own process (see
     open_browser); `exec` makes that process the launcher itself rather than
     a shell waiting for it, so the launcher can tell where it runs. openbox
-    spawns the menu's command straight from its words, no shell."""
+    spawns the menu's command straight from its words, no shell.
+
+    With `browser` false (Chromium absent) no icon is written -- idesk exits
+    when an icon's image file is missing, and a browser icon without a
+    browser would mislead -- and the menu names the gap instead.
+    """
     command = shlex.join(browser_launcher(cfg))
     icons = cfg.state / '.idesktop'
     icons.mkdir(mode=0o700, exist_ok=True)
     (cfg.state / '.ideskrc').write_text(IDESK_CONFIG)
-    (icons / 'browser.lnk').write_text(IDESK_ICON.format(command='exec ' + command, icon=BROWSER_ICON))
+    icon = icons / 'browser.lnk'
+    if browser:
+        icon.write_text(IDESK_ICON.format(command='exec ' + command, icon=BROWSER_ICON))
+    else:
+        icon.unlink(missing_ok=True)
     menu = cfg.state / 'config' / 'openbox'
     menu.mkdir(parents=True, exist_ok=True)
-    (menu / 'menu.xml').write_text(OPENBOX_MENU.format(command=command.replace('&', '&amp;').replace('<', '&lt;')))
+    (menu / 'menu.xml').write_text(
+        OPENBOX_MENU.format(command=command.replace('&', '&amp;').replace('<', '&lt;'))
+        if browser else OPENBOX_MENU_NO_BROWSER)
 
 
 VNC_SECRET_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'

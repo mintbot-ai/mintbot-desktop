@@ -205,7 +205,10 @@ class VirtualDesktop:
         await wait_for_display(x, env, stop, cfg.display)
         if stop.is_set():
             return None
-        write_desktop(cfg)
+        # Chromium is optional (Ubuntu ships it as a snap only): without it
+        # the desktop still serves, and `browse` says the browser is absent.
+        chromium = shutil.which('chromium')
+        write_desktop(cfg, browser=bool(chromium))
         manager = Supervised(children, 'window manager', ['openbox'], env)
         # The icon layer comes once the window manager is up, never
         # before (wait_for_window_manager). It is optional (an older
@@ -215,17 +218,17 @@ class VirtualDesktop:
         if stop.is_set():
             return None
         icons = None
-        if shutil.which('idesk'):
+        if not chromium:
+            # The one icon is the browser's: idesk would have none to show,
+            # and exits when an icon's image is missing.
+            log('chromium is not installed; the desktop runs without a browser (and without its icon)')
+        elif shutil.which('idesk'):
             icons = Supervised(children, 'desktop icons', ['idesk'], env)
         else:
             log('idesk is not installed; the browser icon is missing, the openbox menu still opens it')
-        # Chromium is optional too (Ubuntu ships it as a snap only): without
-        # it the desktop still serves, and `browse` says the browser is absent.
         browser = None
-        if shutil.which('chromium'):
+        if chromium:
             browser = Once(children, 'browser', browser_command(cfg, env), env)
-        else:
-            log('chromium is not installed; the desktop runs without a browser')
         return cls(x, manager, icons, browser, env, stop)
 
     async def check(self):

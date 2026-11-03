@@ -275,6 +275,16 @@ def test_desktop_icon_and_menu_open_the_browser(tmp_path):
     assert 'id="root-menu"' in menu
     assert f'<execute>{shlex.join(command)}</execute>' in menu
     assert sorted(p.name for p in (cfg.state / '.idesktop').iterdir()) == ['browser.lnk']
+    # Without Chromium: no icon for idesk to fail on, a menu that says so.
+    write_desktop(cfg, browser=False)
+    assert not (cfg.state / '.idesktop' / 'browser.lnk').exists()
+    assert sorted(p.name for p in (cfg.state / '.idesktop').iterdir()) == []
+    menu = (cfg.state / 'config' / 'openbox' / 'menu.xml').read_text()
+    assert 'id="root-menu"' in menu and '<execute>' not in menu and 'No browser installed' in menu
+    # And back, once it is installed.
+    write_desktop(cfg)
+    assert (cfg.state / '.idesktop' / 'browser.lnk').is_file()
+    assert f'<execute>{shlex.join(command)}</execute>' in (cfg.state / 'config' / 'openbox' / 'menu.xml').read_text()
 
 
 def test_apt_failure_does_not_report_success_or_start_services(tmp_path):
