@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.15 (2026-11-04)
 
 - Without Chromium (Ubuntu ships it as a snap only, and the install hook
   installs nothing on a non-Debian computer) the virtual desktop no longer
