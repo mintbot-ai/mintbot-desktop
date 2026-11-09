@@ -1,0 +1,123 @@
+# Cut a release of this package from its newest dev build, on request from the
+# LIVE CatOffice ("Promote AXP packages", or the tail of "Promote main -> live":
+# mintbot_updates/lib/axp_release.py in the mintbot repository). The dispatcher
+# has already run the promote gate (developer_tools/axp_promote_check.py: a
+# passed DEV "AXP package tests" run in the dev build's window) and passes its
+# evidence line along; scripts/release.sh's own gate call is answered by
+# .github/scripts/promote_gate_dispatched.py, which only checks that the
+# evidence names this very package, dev build and commit. After the run the
+# dispatcher reads the published release back (not a pre-release, both assets,
+# manifest version and channel, a key mintbot.ai lists) before it reports the
+# package as released.
+#
+# The release key is the repository secret AXP_SIGNING_KEY, set from the
+# publisher machine the way AXP_DEV_SIGNING_KEY is:
+#   gh secret set AXP_SIGNING_KEY -R mintbot-ai/<pkg> < /root/.axp/keys/mintbot.ai-<pkg>.key
+# It exists on the runner only for the signing step. Anyone who can dispatch
+# this workflow (write access to the repository) can cut a release, exactly as
+# anyone holding the key could before.
+#
+# A push made with the workflow token starts no workflow, so the next dev
+# build (which keeps a dev build the newest candidate of dev-tracking hosts,
+# see release-dev.sh) is dispatched explicitly at the end.
+#
+# Canonical text: developer_tools/axp_release_workflow/release.yml in the
+# mintbot repository; PACKAGE below is the only line that differs per package.
+name: release
+run-name: "release v${{ inputs.version }} from ${{ inputs.from_version }} [${{ inputs.request_id }}]"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "the release, X.Y.Z"
+        required: true
+      from_version:
+        description: "the dev build it promotes, X.Y.Z-dev.<UTC stamp>"
+        required: true
+      commit:
+        description: "the dev build's commit; must still be the head of main"
+        required: true
+      request_id:
+        description: "the dispatcher's correlation id (shown in the run name)"
+        required: true
+      gate_evidence:
+        description: "the promote gate's evidence line, as the dispatcher read it"
+        required: true
+
+permissions:
+  contents: write   # the release commit, the tag, the GitHub release
+  actions: write    # the next dev build (gh workflow run dev-build.yml)
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PACKAGE: mintbot-desktop
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: The dev build's commit must still be the head of main
+        env:
+          COMMIT: ${{ inputs.commit }}
+          VERSION: ${{ inputs.version }}
+          FROM_VERSION: ${{ inputs.from_version }}
+        run: |
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release version: ${VERSION}" >&2; exit 1; }
+          [[ "${FROM_VERSION}" == "${VERSION}-dev."* ]] || { echo "${FROM_VERSION} is not a dev build of ${VERSION}" >&2; exit 1; }
+          [[ "${COMMIT}" =~ ^[0-9a-f]{7,40}$ ]] || { echo "not a commit id: ${COMMIT}" >&2; exit 1; }
+          head="$(git rev-parse origin/main)"
+          case "${head}" in
+            "${COMMIT}"*) ;;
+            *) echo "origin/main is ${head}, not the dev build's commit ${COMMIT}: main moved; wait for the new dev build and its DEV package run" >&2; exit 1 ;;
+          esac
+          git checkout --quiet "${head}"
+      - name: The release key secret must be set
+        env:
+          SIGNING_KEY: ${{ secrets.AXP_SIGNING_KEY }}
+        run: |
+          [ -n "${SIGNING_KEY}" ] || { echo "the AXP_SIGNING_KEY secret is not set: on the publisher machine, gh secret set AXP_SIGNING_KEY -R ${GITHUB_REPOSITORY} < /root/.axp/keys/mintbot.ai-${PACKAGE}.key" >&2; exit 1; }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the axp CLI
+        # Pinned: the signing tool is part of what a release is trusted for (the
+        # same pin as dev-build.yml).
+        run: pip install "axp[crypto] @ git+https://github.com/mintbot-ai/agent-extension@2c5784563b658d4e075e52d65bc8bd61b403e7b2"
+      - name: Build and sign the release
+        env:
+          VERSION: ${{ inputs.version }}
+          FROM_VERSION: ${{ inputs.from_version }}
+          GATE_EVIDENCE: ${{ inputs.gate_evidence }}
+          SIGNING_KEY: ${{ secrets.AXP_SIGNING_KEY }}
+        run: |
+          key="${RUNNER_TEMP}/release-signing.key"
+          (umask 077 && printf '%s\n' "${SIGNING_KEY}" > "${key}")
+          trap 'rm -f "${key}"' EXIT
+          AXP_PROMOTE_FROM="${FROM_VERSION}" AXP_GATE_EVIDENCE="${GATE_EVIDENCE}" \
+          AXP_PROMOTE_CHECK="${GITHUB_WORKSPACE}/.github/scripts/promote_gate_dispatched.py" \
+          AXP_SIGNING_KEY="${key}" scripts/release.sh "${VERSION}"
+      - name: Commit, tag, push, publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "mintbot release"
+          git config user.email "release@mintbot.ai"
+          git commit --quiet -am "release v${VERSION}"
+          git tag "v${VERSION}"
+          git push --quiet origin "HEAD:main" "v${VERSION}"
+          gh release create "v${VERSION}" --repo "${GITHUB_REPOSITORY}" --title "v${VERSION}" \
+            --notes-file CHANGELOG.md \
+            "dist/${PACKAGE}-${VERSION}.tar.gz" agent-extension.json
+      - name: Publish the next dev build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run dev-build.yml --repo "${GITHUB_REPOSITORY}" --ref main
