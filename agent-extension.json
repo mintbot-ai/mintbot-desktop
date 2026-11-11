@@ -4,7 +4,7 @@
   "identity": {
     "publisher": "mintbot.ai",
     "name": "mintbot-desktop",
-    "version": "0.1.16",
+    "version": "0.1.17",
     "display_name": "mintbot Desktop",
     "description": "A shared desktop for you and your agent, right in your browser.",
     "author": "mintbot.ai",
@@ -92,11 +92,11 @@
   "release": {
     "channel": "beta",
     "artifact": {
-      "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.16/mintbot-desktop-0.1.16.tar.gz",
-      "sha256": "a79501625fbbae4598ef7b8f0d8c7ae7984bb8ae949e179e442be15b367d3e80"
+      "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.17/mintbot-desktop-0.1.17.tar.gz",
+      "sha256": "385573879269686261c55a2c7172f7d48693256893971a24d80c934e21298bc3"
     },
-    "published_at": "2026-11-09T16:54:53Z",
-    "valid_until": "2027-05-08T16:54:53Z"
+    "published_at": "2026-11-11T17:29:47Z",
+    "valid_until": "2027-05-10T17:29:47Z"
   },
   "updates": {
     "source": {
@@ -122,8 +122,8 @@
       "enforcement": "advisory",
       "delivery": {
         "method": "archive",
-        "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.16/mintbot-desktop-0.1.16.tar.gz",
-        "sha256": "a79501625fbbae4598ef7b8f0d8c7ae7984bb8ae949e179e442be15b367d3e80"
+        "url": "https://github.com/mintbot-ai/mintbot-desktop/releases/download/v0.1.17/mintbot-desktop-0.1.17.tar.gz",
+        "sha256": "385573879269686261c55a2c7172f7d48693256893971a24d80c934e21298bc3"
       },
       "lifecycle": {
         "install": "install.sh",
@@ -144,5 +144,5 @@
       }
     }
   ],
-  "signature": "eFVGgx1s4LvpoVNmThSFcJStcMyc1nuD9CcuBo2r3Th5/xWmvgSe6WHxCPLLGxscJIETaRtDqvmb0ZX0/aawDw=="
+  "signature": "oOB2PCJhGqqsWi0V8Npj7lKqagwPzOjZo5b0TtOcq6swa9nowQXM1H6XIdT5cJiHR1/vrSrfQl3lSnxmReDqCQ=="
 }
